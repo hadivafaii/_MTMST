@@ -1,4 +1,4 @@
-from utils.generic import *
+from utils_model import *
 
 
 def setup_repeat_data(

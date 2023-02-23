@@ -1,39 +1,157 @@
-from .helper import *
-from scipy.spatial.transform import Rotation
+from .utils_model import *
 
 
-class OpticFlow(Obj):
+class Simulation(object):
+	def __init__(
+			self,
+			fov: float,
+			n_fix: int,
+			n_slf: int,
+			n_obj: int,
+			seed: int = 0,
+			verbose: bool = False,
+	):
+		super(Simulation, self).__init__()
+		self.fov = fov
+		self.n_fix = n_fix
+		self.n_slf = n_slf
+		self.n_obj = n_obj
+		self.verbose = verbose
+		self.rng = get_rng(seed)
+		self.fix = None
+		self.vel_slf = None
+		self.vel_obj = None
+		self.pos_obj = None
+		self.acc = None
+		self._idxs()
+
+	def uniform(
+			self,
+			vel_slf: Tuple[float, float] = (0.01, 1),
+			vel_obj: Tuple[float, float] = (0.01, 2),
+	):
+		self.uniform_fix(self.n_fix)
+		self.vel_slf = self.uniform_vel(
+			self.n_slf, vel_slf[0], vel_slf[1])
+		self.vel_obj = self.uniform_vel(
+			self.n_obj, vel_obj[0], vel_obj[1])
+		self.uniform_pos(self.n_obj)
+		self._accept()
+		return self
+
+	def uniform_fix(self, n: int):
+		fix = np_nans((n, 2))
+
+		bound = 1 / np.tan(np.deg2rad(self.fov))
+		kws = dict(low=-bound, high=bound)
+
+		idx = 0
+		while True:
+			x = self.rng.uniform(**kws)
+			y = self.rng.uniform(**kws)
+			if abs(x) + abs(y) < 1:
+				fix[idx] = x, y
+				idx += 1
+			if idx == n:
+				break
+		assert not np.isnan(fix).sum()
+		self.fix = fix
+		return
+
+	def uniform_sphere(self, n: int):
+		points = self.rng.normal(size=(3, n))
+		points /= sp_lin.norm(
+			a=points,
+			axis=0,
+			keepdims=True,
+		)
+		return points
+
+	def uniform_vel(
+			self,
+			n: int,
+			vmin: float,
+			vmax: float, ):
+		v = self.uniform_sphere(n)
+		v *= self.rng.uniform(
+			low=vmin,
+			high=vmax,
+			size=(1, n),
+		)
+		return v
+
+	def uniform_pos(
+			self,
+			n: int,
+			x: Tuple[float, float] = (-1, 1),
+			y: Tuple[float, float] = (-1, 1),
+			z: Tuple[float, float] = (0.2, 1), ):
+		pos = [
+			self.rng.uniform(
+				low=e[0],
+				high=e[1],
+				size=n,
+			) for e in [x, y, z]
+		]
+		self.pos_obj = np.stack(pos, axis=0)
+		return
+
+	def _accept(self, fov_ratio: float = 0.8, z: float = 1):
+		fix = np.concatenate([
+			self.fix,
+			z * np.ones((len(self.fix), 1)),
+		], axis=1)
+		d = sp_dist.cdist(
+			XA=fix,
+			XB=self.pos_obj.T,
+			metric='cosine',
+		)
+		theta = np.rad2deg(np.arccos(1 - d))
+		acc = theta < fov_ratio * self.fov
+		acc = _expand(acc, self.vel_slf.shape[1], 1)
+		self.acc = acc.ravel()
+		if self.verbose:
+			msg = f"{100 * self.acc.sum() / len(self.acc):0.1f} % of total"
+			msg += f" simulations accepted (using fov_ratio = {fov_ratio})"
+			print(msg)
+		return
+
+	def _idxs(self):
+		self.idxs = {
+			i: (a, b, c) for i, (a, b, c) in
+			enumerate(itertools.product(
+				range(self.n_fix),
+				range(self.n_slf),
+				range(self.n_obj),
+			))
+		}
+		return
+
+
+class OpticFlow(object):
 	def __init__(
 			self,
 			fov: float = 45,
 			res: float = 0.1,
 			obj_r: float = 0.2,
 			z_bg: float = 1,
-			seed: int = 0,
-			**kwargs,
 	):
-		super(OpticFlow, self).__init__(**kwargs)
+		super(OpticFlow, self).__init__()
 		assert z_bg > 0
 		self.fov = fov
 		self.res = res
 		self.z_bg = z_bg
 		self.obj_r = obj_r
-		self.rng = get_rng(seed)
 		self._compute_span()
+		self._create_ticks()
 		self._compute_polar_coords()
-
-	def _set_params(self, vel, obj_pos, obj_vel):
-		self.obj_pos, self.obj_vel = _check_obj(
-			obj_pos, obj_vel)
-		self.vel = _check_input(vel, -1)
-		return
 
 	def compute_flow(
 			self,
 			vel: np.ndarray,
 			obj_pos: np.ndarray,
 			obj_vel: np.ndarray, ):
-		self._set_params(vel, obj_pos, obj_vel)
+		self._set_vals(vel, obj_pos, obj_vel)
 		# add object
 		v_transl_obj, x_obj = self._add_obj()
 		x = _expand(self.x, self.obj_pos.shape[1], -1)
@@ -43,24 +161,27 @@ class OpticFlow(Obj):
 		v_transl = self._compute_v_tr()
 		v_transl = _expand(v_transl, x.shape[-1], -1)
 		# expand/merge together
-		kws = {
-			'reps': self.vel.shape[1],
-			'axis': -2,
-		}
+		kws = dict(reps=self.vel.shape[1], axis=-2)
 		x = _expand(x, **kws)
 		nans = _expand(np.isnan(x_obj), **kws)
 		v_transl_obj = _expand(v_transl_obj, **kws)
-		v_transl[~nans] = v_transl_obj[~nans]
+		v_transl[~nans] += v_transl_obj[~nans]
 		# compute retinal velocity
 		alpha_dot = self._compute_alpha_dot(
 			v=v_transl - v_rot, x=x, axis=3)
-		return v_transl_obj, x, v_rot, v_transl, alpha_dot
+		return alpha_dot
 
 	def compute_coords(self, fix: np.ndarray = (0, 0)):
 		self._compute_fix(fix)
 		self._compute_rot()
 		self._compute_xyz()
 		return self
+
+	def _set_vals(self, vel, obj_pos, obj_vel):
+		self.obj_pos, self.obj_vel = _check_obj(
+			obj_pos, obj_vel)
+		self.vel = _check_input(vel, -1)
+		return
 
 	def _add_obj(
 			self,
@@ -176,26 +297,15 @@ class OpticFlow(Obj):
 			np.cos(r[:, [2]]),
 			np.zeros((len(r), 1)),
 		], axis=-1)
-		u0 = np.array(u0)
 		self.R = Rotation.from_rotvec(
-			r[:, [1]] * u0).as_matrix()
+			r[:, [1]] * np.array(u0),
+		).as_matrix()
 		return
 
-	def _compute_fix(self, fix: np.ndarray = None):
-		upper = 1 / np.tan(np.deg2rad(self.fov))
-		if fix is None:
-			x0 = self.rng.uniform(
-				low=-upper,
-				high=upper,
-			)
-			y0 = self.rng.uniform(
-				low=-upper + abs(x0),
-				high=upper - abs(x0),
-			)
-			fix = (x0, y0)
+	def _compute_fix(self, fix: np.ndarray):
 		fix = _check_input(fix, 0)
 		assert fix.shape[1] == 2, "fix = (X0, Y0)"
-
+		upper = 1 / np.tan(np.deg2rad(self.fov))
 		passed = np.abs(fix).sum(1) < upper
 		fix_z = self.z_bg * np.ones((passed.sum(), 1))
 		self.fix = np.concatenate([
@@ -214,6 +324,15 @@ class OpticFlow(Obj):
 			np.tan(self.alpha),
 			np.ones((self.dim,) * 2 + (1,)),
 		], axis=-1)
+		return
+
+	def _create_ticks(self, tick_spacing: int = None):
+		if tick_spacing is None:
+			tick_spacing = 15 // self.res  # self.fov // 3
+		self.ticks, self.ticklabels = zip(*[
+			(i, str(int(np.round(np.rad2deg(x))))) for i, x
+			in enumerate(self.span) if i % tick_spacing == 0
+		])
 		return
 
 	def _compute_span(self):

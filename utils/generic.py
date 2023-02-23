@@ -27,7 +27,7 @@ from scipy import stats as sp_stats
 from scipy import ndimage as sp_img
 from scipy import optimize as sp_optim
 from scipy.spatial import distance as sp_dist
-from statsmodels.stats.multitest import multipletests
+from scipy.spatial.transform import Rotation
 from sklearn.preprocessing import Normalizer
 from numpy.ma import masked_where as mwh
 from prettytable import PrettyTable
@@ -35,6 +35,12 @@ from os.path import join as pjoin
 from datetime import datetime
 from tqdm import tqdm
 from typing import *
+
+
+def to_np(x: torch.Tensor):
+	if isinstance(x, np.ndarray):
+		return x
+	return x.data.cpu().numpy()
 
 
 def flatten_arr(

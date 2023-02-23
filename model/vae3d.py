@@ -278,8 +278,6 @@ class ConvBNSwish(nn.Module):
 
 
 # TODO: InvertedResidual
-
-
 class RotConv3d(nn.Conv3d):
 	def __init__(
 			self,
