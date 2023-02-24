@@ -27,6 +27,45 @@ def load_cellinfo(load_dir: str):
 	return useful_cells
 
 
+def save_simulation(sim, save_dir, split=None):
+	d, n = sim.alpha_dot.shape[1], sim.num
+	file_name = f"simulation_dim-{d}_{n:1.1g}.h5"
+	ff = pjoin(save_dir, file_name)
+	ff = h5py.File(ff, 'w')
+
+	ff.attrs['dim'] = d
+	for item in ['num', 'fov', 'res', 'ratio']:
+		ff.attrs[item] = getattr(sim, item)
+
+	split = split if split else {
+		'trn': int(0.8 * n),
+		'vld': int(0.15 * n),
+		'tst': int(0.05 * n),
+	}
+	assert sum(split.values()) == n
+	i = 0
+	sp_ids = {}
+	for k, v in split.items():
+		sp_ids[k] = range(i, i + v)
+		i += v
+	for a, b in itertools.combinations(sp_ids.values(), 2):
+		assert not set(a).intersection(b)
+
+	for label, ids in sp_ids.items():
+		g = ff.create_group(label)
+		g.create_dataset('x', data=sim.alpha_dot[ids], dtype=float)
+		for item in ['fix', 'vel_slf', 'vel_obj', 'pos_obj']:
+			if item == 'fix':
+				x = getattr(sim, item)[ids]
+			else:
+				x = getattr(sim, item)[:, ids]
+			g.create_dataset(item, data=x, dtype=float)
+
+	print(f'{file_name}\tsaved at\t{save_dir}')
+	ff.close()
+	return
+
+
 # TODO: fix issue with spkst
 def mat2h5py(
 		load_dir: str,

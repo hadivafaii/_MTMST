@@ -24,7 +24,8 @@ class BaseConfig(object):
 		self.results_dir = pjoin(self.base_dir, 'results')
 		self.runs_dir = pjoin(self.base_dir, 'runs', name)
 		self.save_dir = pjoin(self.base_dir, 'models', name)
-		self.h_file = pjoin(self.base_dir, 'xtracted_python', h_file)
+		self.data_dir = pjoin(self.base_dir, 'data')
+		self.h_file = pjoin(self.data_dir, h_file)
 
 		if makedirs:
 			self._mkdirs()

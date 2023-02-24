@@ -4,6 +4,113 @@ from .utils_model import *
 class Simulation(object):
 	def __init__(
 			self,
+			num: int,
+			fov: float,
+			res: float,
+			seed: int = 0,
+			ratio: float = 0.8,
+			verbose: bool = False,
+	):
+		super(Simulation, self).__init__()
+		self.num = num
+		self.fov = fov
+		self.res = res
+		self.ratio = ratio
+		self.verbose = verbose
+		self.rng = get_rng(seed)
+		self.fix = None
+		self.vel_slf = None
+		self.vel_obj = None
+		self.pos_obj = None
+		self.alpha_dot = None
+
+	def fit_sim(self, parallel: bool = True):
+		if parallel:
+			with joblib.parallel_backend('multiprocessing'):
+				alpha_dot = joblib.Parallel(n_jobs=-1)(
+					joblib.delayed(of_fit_single)(
+						self.fov,
+						self.res,
+						self.fix[i],
+						self.vel_slf[:, i],
+						self.vel_obj[:, i],
+						self.pos_obj[:, i],
+					) for i in range(self.num)
+				)
+		else:
+			alpha_dot = []
+			for i in range(self.num):
+				alpha_dot.append(of_fit_single(
+					self.fov,
+					self.res,
+					self.fix[i],
+					self.vel_slf[:, i],
+					self.vel_obj[:, i],
+					self.pos_obj[:, i],
+				))
+		alpha_dot = np.concatenate(alpha_dot)
+		assert not np.isnan(alpha_dot).sum()
+		self.alpha_dot = alpha_dot
+		return self
+
+	def sample(self, n: int = None):
+		n = n if n else self.num
+		fix = np_nans((n, 2))
+		pos_obj = np_nans((3, n))
+		vel_slf = np_nans((3, n))
+		vel_obj = np_nans((3, n))
+		for i in range(n):
+			fix[i] = self._sample_fix()
+			pos_obj[:, i] = self._sample_pos(fix[i])
+			vel_slf[:, i] = self._sample_vel(0.01, 1)
+			vel_obj[:, i] = self._sample_vel(0.01, 2)
+		self.fix = fix
+		self.vel_slf = vel_slf
+		self.vel_obj = vel_obj
+		self.pos_obj = pos_obj
+		return self
+
+	def _of_fit(self, i: int):
+		of = OpticFlow(self.fov, self.res).compute_coords(self.fix[i])
+		x = of.compute_flow(self.vel_slf[:, i], self.pos_obj[:, i], self.vel_obj[:, i])
+		x = x[..., 0, 0]
+		return x
+
+	def _sample_fix(self):
+		bound = 1 / np.tan(np.deg2rad(self.fov))
+		kws = dict(low=-bound, high=bound)
+		while True:
+			x = self.rng.uniform(**kws)
+			y = self.rng.uniform(**kws)
+			if abs(x) + abs(y) < 1:
+				fix = (x, y)
+				break
+		return fix
+
+	def _sample_pos(self, fix, z=(0.5, 1)):
+		f = np.append(fix, 1)
+		while True:
+			e = self.rng.normal(size=3)
+			d = sp_dist.cosine(f, e)
+			d = np.rad2deg(np.arccos(1 - d))
+			if d < self.ratio * self.fov:
+				break
+		_, th, ph = cart2polar(e).ravel()
+		z = self.rng.uniform(low=z[0], high=z[1])
+		pos = polar2cart(np.array([z/np.cos(th), th, ph]))
+		return pos.ravel()
+
+	def _sample_vel(self, vmin, vmax):
+		v = self.rng.normal(size=3)
+		v /= sp_lin.norm(v)
+		v *= self.rng.uniform(
+			low=vmin, high=vmax)
+		return v
+
+
+class SimulationMult(object):
+	def __init__(
+			self,
 			fov: float,
 			n_fix: int,
 			n_slf: int,
@@ -11,7 +118,7 @@ class Simulation(object):
 			seed: int = 0,
 			verbose: bool = False,
 	):
-		super(Simulation, self).__init__()
+		super(SimulationMult, self).__init__()
 		self.fov = fov
 		self.n_fix = n_fix
 		self.n_slf = n_slf
@@ -85,7 +192,7 @@ class Simulation(object):
 			n: int,
 			x: Tuple[float, float] = (-1, 1),
 			y: Tuple[float, float] = (-1, 1),
-			z: Tuple[float, float] = (0.2, 1), ):
+			z: Tuple[float, float] = (0.5, 1), ):
 		pos = [
 			self.rng.uniform(
 				low=e[0],
@@ -680,6 +787,12 @@ class VelField(Obj):
 			else:
 				plt.close()
 		return figs
+
+
+def of_fit_single(fov, res, fix, vel_self, vel_obj, pos_obj):
+	of = OpticFlow(fov, res).compute_coords(fix)
+	x = of.compute_flow(vel_self, pos_obj, vel_obj)
+	return x[..., 0, 0]
 
 
 def _expand(arr, reps, axis):
