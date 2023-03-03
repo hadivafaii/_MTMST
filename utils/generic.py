@@ -37,7 +37,7 @@ from tqdm import tqdm
 from typing import *
 
 
-def to_np(x: torch.Tensor):
+def to_np(x: Union[torch.Tensor, np.ndarray]):
 	if isinstance(x, np.ndarray):
 		return x
 	return x.data.cpu().numpy()

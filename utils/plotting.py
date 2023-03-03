@@ -2,7 +2,6 @@ from .generic import *
 import matplotlib
 import seaborn as sns
 from matplotlib import pyplot as plt
-# from matplotlib.gridspec import GridSpec
 # from matplotlib.patches import PathPatch
 # from matplotlib.path import Path as mpl_Path
 from matplotlib.backends.backend_pdf import FigureCanvasPdf, PdfPages

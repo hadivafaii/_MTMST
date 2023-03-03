@@ -1,9 +1,9 @@
 from utils.plotting import *
 from torch import nn
-from .configuration import ConfigVAE
 from torch.nn import functional as F
 from sklearn.metrics import r2_score
 from sklearn.model_selection import KFold
+from .configuration import ConfigVAE, ConfigTrain
 
 
 def kl_coeff(step, total_step, constant_step, min_kl_coeff):
@@ -117,7 +117,7 @@ def load_model(
 		strict: bool = True,
 		verbose: bool = False,
 		load_dir: str = 'Documents/MTMST/models', ):
-	# cfg
+	# cfg model
 	load_dir = pjoin(os.environ['HOME'], load_dir, name)
 	fname = next(s for s in os.listdir(load_dir) if 'json' in s)
 	with open(pjoin(load_dir, fname), 'r') as f:
@@ -130,15 +130,27 @@ def load_model(
 		model = VAE(cfg, verbose=verbose)
 	else:
 		raise NotImplementedError
-	# bin
+	# now enter the fit folder
 	load_dir = sorted(filter(
 		os.path.isdir, [
 			pjoin(load_dir, e) for e
 			in os.listdir(load_dir)
 		]
 	))[fit]
-	fname = sorted(os.listdir(load_dir))[chkpt]
-	assert fname.split('.')[-1] == 'bin'
+	files = sorted(os.listdir(load_dir))
+	# cfg train
+	fname = next(
+		f for f in files if
+		f.split('.')[-1] == 'json'
+	)
+	with open(pjoin(load_dir, fname), 'r') as f:
+		cfg_train = json.load(f)
+	cfg_train = ConfigTrain(**cfg_train)
+	# bin
+	fname = [
+		f for f in files if
+		f.split('.')[-1] == 'bin'
+	][chkpt]
 	state_dict = pjoin(load_dir, fname)
 	state_dict = torch.load(state_dict)
 	model.load_state_dict(
@@ -151,7 +163,7 @@ def load_model(
 		'chkpt': chkpt,
 		'dir': load_dir,
 	}
-	return model, meta
+	return model, cfg_train, meta
 
 
 def null_adj_ll(
@@ -216,11 +228,12 @@ class Module(nn.Module):
 	def print(self):
 		print_num_params(self)
 
-	def create_chkpt_dir(self, cm: str = None):
+	def create_chkpt_dir(self, comment: str = None):
 		chkpt_dir = pjoin(
 			self.cfg.save_dir,
-			'-'.join([
-				cm if cm else 'fit',
+			'_'.join([
+				comment if comment else
+				f"seed-{self.cfg.seed}",
 				f"({self.datetime})",
 			]),
 		)
@@ -229,7 +242,7 @@ class Module(nn.Module):
 		return
 
 	def save(self, checkpoint: int = -1, path: str = None):
-		path = path if path else self.create_chkpt_dir()
+		path = path if path else self.chkpt_dir
 		fname = '-'.join([
 			type(self).__name__,
 			f"{checkpoint:04d}",

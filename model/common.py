@@ -28,18 +28,27 @@ def gaussian_analytical_kl(mu1, mu2, logsigma1, logsigma2):
 def endpoint_error(
 		true: torch.Tensor,
 		pred: torch.Tensor,
-		dim: int = 1,
-		b: int = None, ):
-	if b is None:
-		error = torch.norm(true-pred, p=2, dim=dim).sum()
+		w: torch.Tensor = None,
+		batch_size: int = None,
+		dim: int = 1, ):
+	delta = true - pred
+	if batch_size is None:
+		error = torch.linalg.norm(delta, dim=dim)
 	else:
-		error = 0.0
-		num = int(np.ceil(len(true) / b))
-		for i in range(num):
-			ids = range(i*b, min((i+1)*b, len(true)))
-			delta = (true - pred)[ids]
-			error += torch.norm(
-				delta, p=2, dim=dim).sum()
+		error = []
+		n = int(np.ceil(len(true) / batch_size))
+		for i in range(n):
+			a = i * batch_size
+			b = min((i+1) * batch_size, len(true))
+			error.append(torch.linalg.norm(
+				delta[range(a, b)], dim=dim,
+			))
+		error = torch.cat(error)
+	if w is not None:
+		error = error.sum(-1).sum(-1)
+		error = (error * w).sum() / w.mean()
+	else:
+		error = error.sum()
 	return error
 
 
@@ -72,7 +81,7 @@ def get_skip_connection(
 				scale_factor=cmult,
 				mode='bilinear',
 				align_corners=True),
-			nn.Conv2d(
+			Conv2D(
 				in_channels=ci,
 				out_channels=int(ci/cmult),
 				kernel_size=1),
@@ -81,7 +90,7 @@ def get_skip_connection(
 		raise NotImplementedError(stride)
 
 
-def get_act_fn(fn: str, inplace: bool = True):
+def get_act_fn(fn: str, inplace: bool = False):
 	if fn == 'none':
 		return None
 	elif fn == 'relu':
@@ -111,21 +120,21 @@ class FactorizedReduce(nn.Module):
 		kwargs = {
 			'in_channels': ci,
 			'out_channels': co//n_ops,
-			'kernel_size': 3,
+			'kernel_size': 1,
 			'stride': co//ci,
-			'padding': 1,
+			'padding': 0,
 			'bias': True,
 		}
 		self.swish = nn.SiLU(inplace=True)
 		self.ops = nn.ModuleList()
 		for i in range(n_ops - 1):
 			if dim == 2:
-				self.ops.append(nn.Conv2d(**kwargs))
+				self.ops.append(Conv2D(**kwargs))
 			else:
 				raise NotImplementedError
 		kwargs['out_channels'] = co - len(self.ops) * (co//n_ops)
 		if dim == 2:
-			self.ops.append(nn.Conv2d(**kwargs))
+			self.ops.append(Conv2D(**kwargs))
 		else:
 			raise NotImplementedError
 
@@ -159,25 +168,166 @@ class SELayer(nn.Module):
 		return x * y.expand_as(x)
 
 
-def add_wn(m: nn.Module):
-	if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
-		nn.utils.weight_norm(m)
+class Conv2D(nn.Conv2d):
+	def __init__(
+			self,
+			in_channels: int,
+			out_channels: int,
+			kernel_size: Union[int, Tuple[int, int]],
+			normalize_dim: int = 0,
+			**kwargs,
+	):
+		kwargs = filter_kwargs(nn.Conv2d, kwargs)
+		super(Conv2D, self).__init__(
+			in_channels=in_channels,
+			out_channels=out_channels,
+			kernel_size=kernel_size,
+			**kwargs,
+		)
+		self.dims, self.shape = _dims(normalize_dim, 4)
+		init = torch.linalg.vector_norm(
+			x=self.weight, dim=self.dims)
+		self.log_weight_norm = nn.Parameter(
+			torch.log(init + 1e-2), requires_grad=True)
+		self.w = self.normalize_weight()
+
+	def forward(self, x):
+		self.w = self.normalize_weight()
+		return F.conv2d(
+			input=x,
+			weight=self.w,
+			bias=self.bias,
+			stride=self.stride,
+			padding=self.padding,
+			dilation=self.dilation,
+			groups=self.groups,
+		)
+
+	def normalize_weight(self):
+		return _normalize(
+			lognorm=self.log_weight_norm,
+			weight=self.weight,
+			shape=self.shape,
+			dims=self.dims,
+		)
 
 
-def add_sn(m: nn.Module):
-	if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
-		nn.utils.spectral_norm(m)
+class DeConv2D(nn.ConvTranspose2d):
+	def __init__(
+			self,
+			in_channels: int,
+			out_channels: int,
+			kernel_size: Union[int, Tuple[int, int]],
+			normalize_dim: int = 0,
+			**kwargs,
+	):
+		kwargs = filter_kwargs(nn.ConvTranspose2d, kwargs)
+		super(DeConv2D, self).__init__(
+			in_channels=in_channels,
+			out_channels=out_channels,
+			kernel_size=kernel_size,
+			**kwargs,
+		)
+		self.dims, self.shape = _dims(normalize_dim, 4)
+		init = torch.linalg.vector_norm(
+			x=self.weight, dim=self.dims)
+		self.log_weight_norm = nn.Parameter(
+			torch.log(init + 1e-2), requires_grad=True)
+		self.w = self.normalize_weight()
+
+	def forward(self, x, output_size=None):
+		self.w = self.normalize_weight()
+		return F.conv_transpose2d(
+			input=x,
+			weight=self.w,
+			bias=self.bias,
+			stride=self.stride,
+			padding=self.padding,
+			dilation=self.dilation,
+			groups=self.groups,
+		)
+
+	def normalize_weight(self):
+		return _normalize(
+			lognorm=self.log_weight_norm,
+			weight=self.weight,
+			shape=self.shape,
+			dims=self.dims,
+		)
 
 
-def get_norm(norm: str):
-	if norm == 'batch':
-		return nn.BatchNorm3d
-	elif norm == 'group':
-		return nn.GroupNorm
-	elif norm == 'layer':
-		return nn.LayerNorm
-	else:
-		return None
+class Linear(nn.Linear):
+	def __init__(
+			self,
+			in_features: int,
+			out_features: int,
+			normalize_dim: int = 0,
+			**kwargs,
+	):
+		kwargs = filter_kwargs(nn.Linear, kwargs)
+		super(Linear, self).__init__(
+			in_features=in_features,
+			out_features=out_features,
+			**kwargs,
+		)
+		self.dims, self.shape = _dims(normalize_dim, 2)
+		init = torch.linalg.vector_norm(
+			x=self.weight, dim=self.dims)
+		self.log_weight_norm = nn.Parameter(
+			torch.log(init + 1e-2), requires_grad=True)
+		self.w = self.normalize_weight()
+
+	def forward(self, x):
+		self.w = self.normalize_weight()
+		return F.linear(
+			input=x,
+			weight=self.w,
+			bias=self.bias,
+		)
+
+	def normalize_weight(self):
+		return _normalize(
+			lognorm=self.log_weight_norm,
+			weight=self.weight,
+			shape=self.shape,
+			dims=self.dims,
+		)
+
+
+class AddNorm(object):
+	def __init__(self, norm, types, **kwargs):
+		super(AddNorm, self).__init__()
+		self.norm = norm
+		self.types = types
+		if self.norm == 'spectral':
+			self.kwargs = filter_kwargs(
+				fn=nn.utils.parametrizations.spectral_norm,
+				kw=kwargs,
+			)
+		elif self.norm == 'weight':
+			self.kwargs = filter_kwargs(
+				fn=nn.utils.weight_norm,
+				kw=kwargs,
+			)
+		else:
+			raise NotImplementedError
+
+	def get_fn(self) -> Callable:
+		if self.norm == 'spectral':
+			def fn(m):
+				if isinstance(m, self.types):
+					nn.utils.parametrizations.spectral_norm(
+						module=m, **self.kwargs)
+				return
+		elif self.norm == 'weight':
+			def fn(m):
+				if isinstance(m, self.types):
+					nn.utils.weight_norm(
+						module=m, **self.kwargs)
+				return
+		else:
+			raise NotImplementedError
+		return fn
 
 
 def get_init_fn(init_range: float = 0.01):
@@ -207,3 +357,21 @@ def get_init_fn(init_range: float = 0.01):
 				val=0.0,
 			)
 	return init_weights
+
+
+def _dims(normalize_dim, ndims):
+	assert normalize_dim in [0, 1]
+	dims = list(range(ndims))
+	shape = [
+		1 if i != normalize_dim
+		else -1 for i in dims
+	]
+	dims.pop(normalize_dim)
+	return dims, shape
+
+
+def _normalize(lognorm, weight, shape, dims, eps=1e-6):
+	n = torch.exp(lognorm).view(shape)
+	wn = torch.linalg.vector_norm(
+		x=weight, dim=dims, keepdim=True)
+	return n * weight / (wn + eps)

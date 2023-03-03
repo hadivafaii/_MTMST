@@ -1,4 +1,28 @@
-from utils_model import *
+from .utils_model import *
+from torch.utils.data.dataset import Dataset
+
+
+class ROFL(Dataset):
+	def __init__(
+			self,
+			x: np.ndarray,
+			transform=None,
+	):
+		self.x = np.transpose(
+			x, (0, 3, 1, 2))
+		self.norm = sp_lin.norm(
+			x, axis=-1).sum(-1).sum(-1)
+		self.transform = transform
+
+	def __len__(self):
+		return len(self.x)
+
+	def __getitem__(self, i):
+		x = self.x[i]
+		n = self.norm[i]
+		if self.transform is not None:
+			x = self.transform(x)
+		return x, n
 
 
 def setup_repeat_data(
