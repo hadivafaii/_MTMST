@@ -155,6 +155,8 @@ def get_rng(
 
 
 def setup_kwargs(defaults, kwargs):
+	if not kwargs:
+		return defaults
 	for k, v in defaults.items():
 		if k not in kwargs:
 			kwargs[k] = v

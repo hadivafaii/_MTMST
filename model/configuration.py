@@ -2,7 +2,6 @@ from utils.generic import *
 from utils.process import load_cellinfo
 
 
-# _NORM_CHOICES = ['batch', 'layer', 'group']
 _CONV_NORM_CHOICES = ['weight', 'spectral', None]
 _SCHEDULER_CHOICES = ['cosine', 'exponential', 'step', 'cyclic', None]
 _OPTIM_CHOICES = ['adamw', 'adamax', 'sgd']
@@ -14,7 +13,6 @@ class BaseConfig(object):
 			name: str,
 			seed: int = 0,
 			full: bool = False,
-			# init_range: float = 0.01,
 			h_file: str = 'MTLFP_tres25',
 			h_pre: str = 'simulation_dim-19_1e+05',
 			base_dir: str = 'Documents/MTMST',
@@ -30,7 +28,6 @@ class BaseConfig(object):
 			self.h_pre = pjoin(self.data_dir, f"{h_pre}.h5")
 			self._mkdirs()
 			self._load_cellinfo()
-		# self.init_range = init_range
 			self.seed = seed
 			self.set_seed()
 
@@ -143,6 +140,9 @@ class ConfigVAE(BaseConfig):
 		if create:
 			self.save(self.save_dir)
 
+	def total_latents(self):
+		return sum(self.groups) * self.n_latent_per_group
+
 	def get_name(self):
 		name = [
 			'x'.join([
@@ -176,28 +176,24 @@ class ConfigTrain(BaseConfig):
 	def __init__(
 			self,
 			lr: float = 1e-1,
-			beta1: float = 0.9,
-			beta2: float = 0.999,
+			epochs: int = 400,
 			batch_size: int = 64,
+			warmup_epochs: int = 30,
 			optimizer: str = 'adamax',
-			weight_decay: float = 3e-4,
-			lambda_norm: float = 1e-2,
+			optimizer_kws: dict = None,
 			lambda_init: float = 10,
+			lambda_norm: float = 1e-2,
 			lambda_anneal: bool = False,
+			balanced_recon: bool = True,
 			kl_const_coeff: float = 1e-4,
 			kl_const_portion: float = 1e-4,
 			kl_anneal_portion: float = 0.3,
 			scheduler_type: str = 'cosine',
-			scheduler_gamma: float = 0.9,
-			scheduler_period: int = None,
-			balanced_recon: bool = True,
-			warmup_epochs: int = 30,
-			clip_grad: float = 1000,
-			lr_min: float = 1e-4,
+			scheduler_kws: dict = None,
+			clip_grad: float = None,
 			chkpt_freq: int = 10,
 			eval_freq: int = 5,
 			log_freq: int = 2,
-			epochs: int = 400,
 			**kwargs,
 	):
 		super(ConfigTrain, self).__init__(
@@ -206,14 +202,13 @@ class ConfigTrain(BaseConfig):
 			**kwargs,
 		)
 		self.lr = lr
-		self.beta1 = beta1
-		self.beta2 = beta2
+		self.epochs = epochs
 		self.batch_size = batch_size
-		self.weight_decay = weight_decay
+		self.warmup_epochs = warmup_epochs
 		if lambda_anneal:
-			assert lambda_norm > 0 and lambda_init > 0
-		self.lambda_norm = lambda_norm
+			assert lambda_init > 0 and lambda_norm > 0
 		self.lambda_init = lambda_init
+		self.lambda_norm = lambda_norm
 		self.lambda_anneal = lambda_anneal
 		self.kl_const_coeff = kl_const_coeff
 		self.kl_const_portion = kl_const_portion
@@ -221,36 +216,67 @@ class ConfigTrain(BaseConfig):
 		assert optimizer in _OPTIM_CHOICES,\
 			f"allowed optimizers:\n{_OPTIM_CHOICES}"
 		self.optimizer = optimizer
+		self._set_optim_kws(optimizer_kws)
 		assert scheduler_type in _SCHEDULER_CHOICES,\
 			f"allowed schedulers:\n{_SCHEDULER_CHOICES}"
 		self.scheduler_type = scheduler_type
-		self.scheduler_gamma = scheduler_gamma
-		if scheduler_period is None:
-			scheduler_period = float(
-				epochs - warmup_epochs - 1)
-		self.scheduler_period = scheduler_period
+		self._set_scheduler_kws(scheduler_kws)
 		self.balanced_recon = balanced_recon
-		self.warmup_epochs = warmup_epochs
 		self.clip_grad = clip_grad
-		self.lr_min = lr_min
 		self.chkpt_freq = chkpt_freq
 		self.eval_freq = eval_freq
 		self.log_freq = log_freq
-		self.epochs = epochs
 
 	def get_name(self):
 		return 'TrainerVAE'
 	# TODO: create this function,
 	#  will go to comment in train()
 
-	def get_scheduler_period(self, period):
-		if period is None:
-			return float(
-				self.epochs -
-				self.warmup_epochs - 1
-			)
+	def _set_optim_kws(self, kws):
+		defaults = {
+			'betas': (0.9, 0.999),
+			'weight_decay': 3e-4,
+			'eps': 1e-8,
+		}
+		kws = setup_kwargs(defaults, kws)
+		self.optimizer_kws = kws
+		return
+
+	def _set_scheduler_kws(self, kws):
+		lr_min = 1e-4
+		period = float(
+			self.epochs - 1 -
+			self.warmup_epochs
+		)
+		if self.scheduler_type == 'cosine':
+			defaults = {
+				'T_max': period,
+				'eta_min': lr_min,
+			}
+		elif self.scheduler_type == 'exponential':
+			defaults = {
+				'gamma': 0.9,
+				'eta_min': 1e-4,
+			}
+		elif self.scheduler_type == 'step':
+			defaults = {
+				'gamma': 0.1,
+				'step_size': 10,
+			}
+		elif self.scheduler_type == 'cyclic':
+			defaults = {
+				'max_lr': self.lr,
+				'base_lr': lr_min,
+				'mode': 'exp_range',
+				'step_size_up': period,
+				'step_size': 10,
+				'gamma': 0.9,
+			}
 		else:
-			return period
+			raise NotImplementedError(self.scheduler_type)
+		kws = setup_kwargs(defaults, kws)
+		self.scheduler_kws = kws
+		return
 
 
 def groups_per_scale(

@@ -159,31 +159,28 @@ class VAE(Module):
 
 		return self.out(s), latents
 
-	def loss_kl(self, all_q, all_p, all_log_q, all_log_p):
+	@staticmethod
+	def loss_kl(all_q, all_p, all_log_q, all_log_p):
 		kl_all, kl_diag = [], []
 		tot_log_q, tot_log_p = 0., 0.
 		for q, p, log_q, log_p in zip(all_q, all_p, all_log_q, all_log_p):
 			kl_per_var = q.kl(p)
-			if not self.cfg.compress:
-				kl_per_var = torch.sum(kl_per_var, dim=[2, 3])
+			# if not self.cfg.compress:
+			kl_per_var = torch.sum(kl_per_var, dim=[2, 3])
 			kl_diag.append(torch.mean(kl_per_var, dim=0))  # TODO: mean? or sum?
 			kl_all.append(torch.sum(kl_per_var, dim=1))
-			if not self.cfg.compress:
-				tot_log_q += torch.sum(log_q, dim=[1, 2, 3])
-				tot_log_p += torch.sum(log_q, dim=[1, 2, 3])
-			else:
-				tot_log_q += torch.sum(log_q, dim=1)
-				tot_log_p += torch.sum(log_q, dim=1)
+			# if not self.cfg.compress:
+			tot_log_q += torch.sum(log_q, dim=[1, 2, 3])
+			tot_log_p += torch.sum(log_q, dim=[1, 2, 3])
+			# else:
+			# tot_log_q += torch.sum(log_q, dim=1)
+			# tot_log_p += torch.sum(log_q, dim=1)
 		return tot_log_q, tot_log_p, kl_all, kl_diag
 
 	def loss_spectral(self, device: torch.device = None):
 		weights = collections.defaultdict(list)
 		for lay in self.all_conv_layers:
-			w = lay.weight_normalized
-			w = w.view(w.size(0), -1)
-			weights[w.size()].append(w)
-		for lay in self.all_linear_layers:
-			w = lay.weight_normalized
+			w = lay.w.view(lay.w.size(0), -1)
 			weights[w.size()].append(w)
 		weights = {
 			k: torch.stack(v) for
@@ -237,37 +234,32 @@ class VAE(Module):
 			act_fn=self.cfg.activation_fn,
 			use_bn=self.cfg.use_bn,
 			use_se=self.cfg.use_se,
-			normalize=self.cfg.weight_norm,
+			normalize_dim=0,
 		)
 		self._init_stem()
 		self._init_sizes()
 		mult = self._init_pre(1)
-		# print(mult, 'after _init_pre()')
 		if not self.vanilla:
 			mult = self._init_enc(mult)
 		else:
 			self.enc_tower = []
-		# print(mult, 'after _init_enc()')
 		mult = self._init_enc0(mult)
-		# print(mult, 'after _init_enc0()')
 		self._init_sampler(mult)
-		# print(mult, 'after _init_sampler()')
 		if not self.vanilla:
 			mult = self._init_dec(mult)
 			self.stem_decoder = None
 		else:
 			self.dec_tower = []
 			self.stem_decoder = Conv2D(
-				normalize=self.kws['normalize'],
+				normalize_dim=self.kws['normalize_dim'],
 				in_channels=self.cfg.n_latent_per_group,
 				out_channels=int(mult * self.n_ch),
 				kernel_size=1,
 			)
-		# print(mult, 'after _init_dec()')
 		mult = self._init_post(mult)
-		# print(mult, 'after _init_post()')
+		self._init_normalization()
 		self._init_output(mult)
-		self._init_norm()
+
 		return
 
 	def _init_sizes(self):
@@ -277,10 +269,8 @@ class VAE(Module):
 			input_sz // _MULT ** (i + self.cfg.n_pre_blocks)
 			for i in range(self.cfg.n_latent_scales)
 		]
-		# self.scales.reverse()  # top --> down
 		self.z0_sz = [self.cfg.n_latent_per_group]
-		if not self.cfg.compress:
-			self.z0_sz += [self.scales[-1]] * 2
+		self.z0_sz += [1 if self.cfg.compress else self.scales[-1]] * 2
 		prior_ftr0_sz = [
 			input_sz // self.scales[-1] * self.n_ch,
 			self.scales[-1],
@@ -302,9 +292,9 @@ class VAE(Module):
 			)
 		else:
 			self.stem = Conv2D(
-				normalize=self.kws['normalize'],
 				in_channels=2,
 				out_channels=self.cfg.n_kers * self.cfg.n_rots,
+				normalize_dim=self.kws['normalize_dim'],
 				kernel_size=self.cfg.ker_sz,
 				padding='valid',
 			)
@@ -359,11 +349,7 @@ class VAE(Module):
 						s == self.cfg.n_latent_scales - 1
 				)
 				if combiner:
-					enc.append(CombinerEnc(
-						ci=ch,
-						co=ch,
-						normalize=self.kws['normalize'],
-					))
+					enc.append(CombinerEnc(ch, ch))
 
 			# down cells after finishing a scale
 			if s < self.cfg.n_latent_scales - 1:
@@ -382,6 +368,7 @@ class VAE(Module):
 	def _init_enc0(self, mult):
 		ch = int(self.n_ch * mult)
 		kws = dict(
+			normalize_dim=self.kws['normalize_dim'],
 			in_channels=ch,
 			out_channels=ch,
 			kernel_size=1,
@@ -389,7 +376,7 @@ class VAE(Module):
 		)
 		self.enc0 = nn.Sequential(
 			nn.ELU(inplace=True),
-			Conv2D(normalize=self.kws['normalize'], **kws),
+			Conv2D(**kws),
 			nn.ELU(inplace=True),
 		)
 		return mult
@@ -397,12 +384,8 @@ class VAE(Module):
 	def _init_sampler(self, mult):
 		co = 2 * self.cfg.n_latent_per_group
 		kws = dict(
+			normalize_dim=1,
 			out_channels=co,
-			stride=1,
-		)
-		kws_lin = dict(
-			out_features=co,
-			normalize=False,
 		)
 		enc_sampler = nn.ModuleList()
 		dec_sampler = nn.ModuleList()
@@ -411,38 +394,44 @@ class VAE(Module):
 			s_inv = self.cfg.n_latent_scales - s - 1
 			ch = int(self.n_ch * mult)
 			kws['in_channels'] = ch
-			kws_lin['in_features'] = ch * self.scales[s_inv] ** 2
 			for g in range(self.cfg.groups[s_inv]):
 				if self.cfg.compress:
-					enc_sampler.append(nn.Sequential(
-						nn.Flatten(start_dim=1),
-						Linear(**kws_lin),
+					expand.append(DeConv2D(
+						in_channels=self.cfg.n_latent_per_group,
+						out_channels=self.cfg.n_latent_per_group,
+						kernel_size=self.scales[s_inv],
+						normalize_dim=0,
 					))
-					expand.append(Expand(
-						normalize=self.kws['normalize'],
-						zdim=self.cfg.n_latent_per_group,
-						sdim=self.scales[s_inv],
-					))
+					# expand.append(Expand(
+					# 	normalize=self.kws['normalize'],
+					# 	zdim=self.cfg.n_latent_per_group,
+					# 	sdim=self.scales[s_inv],
+					# ))
+					kws['kernel_size'] = self.scales[s_inv]
+					kws['padding'] = 0
 				else:
+					expand.append(nn.Identity())
 					kws['kernel_size'] = 3
 					kws['padding'] = 1
-					enc_sampler.append(Conv2D(**kws))
-					expand.append(nn.Identity())
+				enc_sampler.append(Conv2D(**kws))
+				# enc_sampler.append(Conv2D(**kws))
+				# expand.append(nn.Identity())
 				if s == 0 and g == 0:
 					continue  # 1st group: we used a fixed standard Normal
 				if self.cfg.compress:
-					dec_sampler.append(nn.Sequential(
-						nn.Flatten(start_dim=1),
-						nn.ELU(inplace=True),
-						Linear(**kws_lin),
-					))
+					kws['kernel_size'] = self.scales[s_inv]
+					kws['padding'] = 0
+					# dec_sampler.append(nn.Sequential(
+					# 	nn.ELU(inplace=True),
+					# 	Linear(**kws_lin),
+					# ))
 				else:
 					kws['kernel_size'] = 1
 					kws['padding'] = 0
-					dec_sampler.append(nn.Sequential(
-						nn.ELU(inplace=True),
-						Conv2D(**kws),
-					))
+				dec_sampler.append(nn.Sequential(
+					nn.ELU(inplace=True),
+					Conv2D(**kws),
+				))
 			mult /= _MULT
 		self.enc_sampler = enc_sampler
 		self.dec_sampler = dec_sampler
@@ -467,7 +456,6 @@ class VAE(Module):
 					ci1=ch,
 					ci2=self.cfg.n_latent_per_group,
 					co=ch,
-					normalize=self.kws['normalize'],
 				))
 
 			# down cells after finishing a scale
@@ -523,43 +511,31 @@ class VAE(Module):
 		return mult
 
 	def _init_output(self, mult):
-		self.out = ConvLayer(
-			ci=int(self.n_ch * mult),
-			co=2,
-			stride=1,
-			act_fn='elu',
-			use_bn=self.kws['use_bn'],
-			normalize=self.kws['normalize'],
+		self.out = nn.Sequential(
+			nn.ELU(inplace=True),
+			nn.Conv2d(
+				in_channels=int(self.n_ch * mult),
+				out_channels=2,
+				kernel_size=3,
+				padding=1),
 		)
 		return
 
-	def _init_norm(self):
+	def _init_normalization(self):
 		self.all_log_norm = []
 		self.all_conv_layers = []
-		self.all_linear_layers = []
 		for n, lay in self.named_modules():
-			if isinstance(lay, Conv2D):
-				if lay.log_weight_norm is None:
-					continue
+			if isinstance(lay, (Conv2D, DeConv2D)):
+				self.all_log_norm.append(lay.log_weight_norm)
 				self.all_conv_layers.append(lay)
-				self.all_log_norm.append(lay.log_weight_norm)  # TODO: temp
-			elif isinstance(lay, Linear):
-				self.all_linear_layers.append(lay)
 		self.sr_u, self.sr_v = {}, {}
 		if not self.cfg.spectral_reg:
 			fn = AddNorm(
 				norm='spectral',
-				types=nn.Conv2d,
+				types=(nn.Conv2d, nn.ConvTranspose2d),
 				n_power_iterations=self.cfg.n_power_iter,
 			).get_fn()
 			self.apply(fn)
-			fn = AddNorm(
-				norm='spectral',
-				types=nn.Linear,
-				n_power_iterations=self.cfg.n_power_iter,
-			).get_fn()
-			for lay in self.all_linear_layers:
-				lay.apply(fn)
 		return
 
 
@@ -584,13 +560,12 @@ class CombinerEnc(nn.Module):
 			self,
 			ci: int,
 			co: int,
-			normalize: bool,
 	):
 		super(CombinerEnc, self).__init__()
 		self.conv = Conv2D(
-			normalize=normalize,
 			in_channels=ci,
 			out_channels=co,
+			normalize_dim=0,
 			kernel_size=1,
 		)
 
@@ -604,13 +579,12 @@ class CombinerDec(nn.Module):
 			ci1: int,
 			ci2: int,
 			co: int,
-			normalize: bool,
 	):
 		super(CombinerDec, self).__init__()
 		self.conv = Conv2D(
-			normalize=normalize,
 			in_channels=ci1+ci2,
 			out_channels=co,
+			normalize_dim=0,
 			kernel_size=1,
 		)
 
@@ -629,7 +603,6 @@ class Cell(nn.Module):
 			act_fn: str,
 			use_bn: bool,
 			use_se: bool,
-			normalize: bool,
 			**kwargs,
 	):
 		super(Cell, self).__init__()
@@ -644,7 +617,6 @@ class Cell(nn.Module):
 				if i == 0 else 1,
 				act_fn=act_fn,
 				use_bn=use_bn,
-				normalize=normalize,
 				**kwargs,
 			)
 			self.ops.append(op)
@@ -670,7 +642,6 @@ class ConvLayer(nn.Module):
 			stride: int,
 			act_fn: str,
 			use_bn: bool,
-			normalize: bool,
 			**kwargs,
 	):
 		super(ConvLayer, self).__init__()
@@ -678,6 +649,7 @@ class ConvLayer(nn.Module):
 			'in_channels': ci,
 			'out_channels': co,
 			'kernel_size': 3,
+			'normalize_dim': 0,
 			'stride': abs(stride),
 			'padding': 1,
 			'dilation': 1,
@@ -698,8 +670,7 @@ class ConvLayer(nn.Module):
 			self.bn = None
 		self.act_fn = get_act_fn(act_fn, False)
 		kwargs = setup_kwargs(defaults, kwargs)
-		kwargs = filter_kwargs(nn.Conv2d, kwargs)
-		self.conv = Conv2D(normalize, **kwargs)
+		self.conv = Conv2D(**kwargs)
 
 	def forward(self, x):
 		if self.bn is not None:

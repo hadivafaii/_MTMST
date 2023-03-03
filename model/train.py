@@ -109,23 +109,18 @@ class BaseTrainer(object):
 
 	def setup_optim(self):
 		# optimzer
-		params = add_weight_decay(
-			model=self.model,
-			weight_decay=self.cfg.weight_decay,
-		)
+		params = self.model.parameters()
 		if self.cfg.optimizer == 'adamw':
 			self.optim = torch.optim.AdamW(
 				params=params,
 				lr=self.cfg.lr,
-				weight_decay=self.cfg.weight_decay,
-				betas=(self.cfg.beta1, self.cfg.beta2),
+				**self.cfg.optimizer_kws,
 			)
 		elif self.cfg.optimizer == 'adamax':
 			self.optim = torch.optim.Adamax(
 				params=params,
 				lr=self.cfg.lr,
-				weight_decay=self.cfg.weight_decay,
-				betas=(self.cfg.beta1, self.cfg.beta2),
+				**self.cfg.optimizer_kws,
 			)
 		else:
 			raise NotImplementedError(self.cfg.optimizer)
@@ -133,39 +128,26 @@ class BaseTrainer(object):
 		# scheduler
 		if self.cfg.scheduler_type == 'cosine':
 			self.optim_schedule = torch.optim.lr_scheduler.CosineAnnealingLR(
-				self.optim,
-				T_max=self.cfg.scheduler_period,
-				eta_min=self.cfg.lr_min,
-			)
+				self.optim, **self.cfg.scheduler_kws)
 		elif self.cfg.scheduler_type == 'exponential':
 			self.optim_schedule = torch.optim.lr_scheduler.ExponentialLR(
-				self.optim,
-				gamma=self.cfg.scheduler_gamma,
-			)
+				self.optim, **self.cfg.scheduler_kws)
 		elif self.cfg.scheduler_type == 'step':
 			self.optim_schedule = torch.optim.lr_scheduler.StepLR(
-				self.optim,
-				step_size=self.cfg.scheduler_period,
-				gamma=self.cfg.scheduler_gamma,
-			)
+				self.optim, **self.cfg.scheduler_kws)
 		elif self.cfg.scheduler_type == 'cyclic':
 			self.optim = torch.optim.SGD(
-				self.model.parameters(),
+				params=params,
 				lr=self.cfg.lr,
-				weight_decay=self.cfg.weight_decay,
 				momentum=0.9,
+				weight_decay=self.cfg.optimizer_kws.get('weight_decay', 0),
 			)
 			self.optim_schedule = torch.optim.lr_scheduler.CyclicLR(
-				self.optim,
-				base_lr=self.cfg.lr_min,
-				max_lr=self.cfg.lr,
-				step_size_up=self.cfg.scheduler_period,
-				gamma=self.cfg.scheduler_gamma,
-				mode='exp_range',
-			)
+				self.optim, **self.cfg.scheduler_kws)
+		elif self.cfg.scheduler_type is None:
+			self.optim_schedule = None
 		else:
 			raise NotImplementedError(self.cfg.scheduler_type)
-
 		return
 
 	def to(self, x, dtype=torch.float32) -> Union[torch.Tensor, List[torch.Tensor]]:
@@ -254,24 +236,22 @@ class TrainerVAE(BaseTrainer):
 				loss_sr = None
 
 			loss.backward()
-			grad_norm = nn.utils.clip_grad_norm_(
-				parameters=self.model.parameters(),
-				max_norm=self.cfg.clip_grad,
-			)
+			if self.cfg.clip_grad is not None:
+				grad_norm = nn.utils.clip_grad_norm_(
+					parameters=self.model.parameters(),
+					max_norm=self.cfg.clip_grad,
+				)
+			else:
+				grad_norm = None
 			self.optim.step()
 			nelbo.update(loss.item(), 1)
-			# if epoch > self.cfg.warmup_epochs:
-			# thres = self.cfg.batch_size * 4
-			# if _check_grads(grads, global_step, thres):
-			# continue
 
 			if global_step % (len(self.dl_trn) // self.cfg.log_freq) == 0:
 				to_write = {
 					'train/kl_beta': beta,
 					'train/wd_coeff': wd_coeff,
-					'train/grad': grad_norm.item(),
 					'train/lr': self.optim.param_groups[0]['lr'],
-					'train/kl_iter': torch.mean(sum(kl_all)),
+					'train/kl_iter': torch.mean(sum(kl_all)).item(),
 					'train/nelbo_avg': nelbo.avg / self.cfg.batch_size,
 					'train/loss_tot_iter': loss.item() / self.cfg.batch_size,
 					'train/recon_iter': loss_recon.item() / self.cfg.batch_size,
@@ -279,24 +259,26 @@ class TrainerVAE(BaseTrainer):
 				if self.model.cfg.weight_norm:
 					to_write['train/loss_weight_iter'] = loss_w.item()
 				if self.model.cfg.spectral_reg:
-					to_write['train/loss_spectral_iter']: loss_sr.item()
-				total_active = 0
+					to_write['train/loss_spectral_iter'] = loss_sr.item()
+				total = 0
 				for j, kl_diag_i in enumerate(kl_diag):
-					to_write[f"kl/beta_layer_{j}"] = kl_coeffs[j]
-					to_write[f"kl/vals_layer_{j}"] = kl_vals[j]
+					to_write[f"kl/beta_layer_{j}"] = kl_coeffs[j].item()
+					to_write[f"kl/vals_layer_{j}"] = kl_vals[j].item()
 					n_active = torch.sum(kl_diag_i > 0.1).item()
 					to_write[f"kl/active_{j}"] = n_active
-					total_active += n_active
-				to_write['kl/total_active'] = total_active
-				to_write['kl/total_active_ratio'] = total_active /\
-					sum(self.model.cfg.groups) / self.model.cfg.n_latent_per_group
+					total += n_active
+				to_write['kl/total_active'] = total
+				ratio = total / self.model.cfg.total_latents()
+				to_write['kl/total_active_ratio'] = ratio
 				grads = [
 					torch.linalg.norm(p.grad).item() for
 					n, p in self.model.named_parameters()
 				]
-				to_write['grads/median'] = np.median(grads)
-				to_write['grads/mean'] = np.mean(grads)
-				to_write['grads/max'] = np.max(grads)
+				to_write['grads/median'] = np.median(grads) / self.cfg.batch_size
+				to_write['grads/mean'] = np.mean(grads) / self.cfg.batch_size
+				to_write['grads/max'] = np.max(grads) / self.cfg.batch_size
+				if grad_norm is not None:
+					to_write['grads/norm'] = grad_norm.item()
 				for k, v in to_write.items():
 					self.writer.add_scalar(k, v, global_step)
 
@@ -334,17 +316,5 @@ def _check_nans(loss, global_step: int):
 		msg = 'nan encountered in loss. '
 		msg += 'optimizer will detect this & skip. '
 		msg += f"global step = {global_step}"
-		print(msg)
-		return True
-
-
-def _check_grads(grads, global_step: int, thres=1e3):
-	if np.mean(grads) > thres:
-		msg = 'exploding gradients encountered. '
-		msg += 'optimizer will detect this & skip. '
-		msg += f"(global step = {global_step}):\n"
-		msg += f"mean(grads) = {np.mean(grads):0.1g},  "
-		msg += f"median(grads) = {np.median(grads):0.1g},  "
-		msg += f"max(grads) = {np.max(grads):0.1g},  "
 		print(msg)
 		return True

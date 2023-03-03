@@ -72,7 +72,7 @@ def get_skip_connection(
 	if isinstance(stride, str):
 		stride = get_stride(stride, cmult)
 	if stride == 1:
-		return Identity()
+		return nn.Identity()
 	elif stride in [2, 4]:
 		return FactorizedReduce(ci, int(cmult*ci))
 	elif stride == -1:
@@ -101,15 +101,6 @@ def get_act_fn(fn: str, inplace: bool = False):
 		return nn.ELU(inplace=inplace)
 	else:
 		raise NotImplementedError(fn)
-
-
-# noinspection PyMethodMayBeStatic
-class Identity(nn.Module):
-	def __init__(self):
-		super(Identity, self).__init__()
-
-	def forward(self, x):
-		return x
 
 
 class FactorizedReduce(nn.Module):
