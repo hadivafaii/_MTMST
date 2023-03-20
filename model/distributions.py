@@ -23,23 +23,25 @@ class Normal:
 
 	def sample(self):
 		return sample_normal(self.mu, self.sigma, self.rng)
-
-	def sample_given_eps(self, eps: torch.Tensor):
-		return eps * self.sigma + self.mu
+		# return sample_normal_jit(self.mu, self.sigma)
 
 	def log_p(self, samples: torch.Tensor):
-		normalized_samples = (samples - self.mu) / self.sigma
-		log_p = - 0.5 * (
-				normalized_samples ** 2 -
-				torch.log(self.sigma) +
-				np.log(2 * np.pi)
+		zscored = (samples - self.mu) / self.sigma
+		log_p = (
+			- 0.5 * zscored.pow(2)
+			- 0.5 * np.log(2*np.pi)
+			- torch.log(self.sigma)
 		)
 		return log_p
 
-	def kl(self, normal_dist):
-		term1 = (self.mu - normal_dist.mu) / normal_dist.sigma
-		term2 = self.sigma / normal_dist.sigma
-		return 0.5 * (term1 ** 2 + term2 ** 2) - 0.5 - torch.log(term2)
+	def kl(self, p):
+		term1 = (self.mu - p.mu) / p.sigma
+		term2 = self.sigma / p.sigma
+		kl = 0.5 * (
+			term1.pow(2) + term2.pow(2)
+			- 2 * torch.log(term2) - 1
+		)
+		return kl
 
 
 def soft_clamp(x: torch.Tensor, c: float = 5.0):
@@ -50,21 +52,20 @@ def sample_normal(
 		mu: torch.Tensor,
 		sigma: torch.Tensor,
 		generator: torch.Generator = None, ):
-	eps = mu.mul(0).normal_(generator=generator)
-	z = eps.mul_(sigma).add_(mu)
-	return z, eps
+	eps = mu.mul(0).normal_(
+		generator=generator).mul_(sigma)
+	z = eps.add(mu)
+	return z
 
 
-@torch.jit.script
-def soft_clamp_jit(x: torch.Tensor, c: float = 5.0):
-	return x.div(c).tanh_().mul(c)
+# @torch.jit.script
+# def soft_clamp_jit(x):
+	# return x.div(5).tanh_().mul(5)
 	# 5. * torch.tanh(x / 5.) <--> soft differentiable clamp between [-5, 5]
 
 
-@torch.jit.script
-def sample_normal_jit(
-		mu: torch.Tensor,
-		sigma: torch.Tensor, ):
-	eps = mu.mul(0).normal_()
-	z = eps.mul_(sigma).add_(mu)
-	return z, eps
+# @torch.jit.script
+# def sample_normal_jit(mu, sigma):
+	# eps = mu.mul(0).normal_()
+	# z = eps.mul_(sigma).add(mu)
+	# return z

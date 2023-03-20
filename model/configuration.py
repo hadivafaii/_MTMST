@@ -2,22 +2,21 @@ from utils.generic import *
 from utils.process import load_cellinfo
 
 
-_CONV_NORM_CHOICES = ['weight', 'spectral', None]
-_SCHEDULER_CHOICES = ['cosine', 'exponential', 'step', 'cyclic', None]
 _OPTIM_CHOICES = ['adamw', 'adamax', 'sgd']
+_SCHEDULER_CHOICES = ['cosine', 'exponential', 'step', 'cyclic', None]
 
 
-class BaseConfig(object):
+class _BaseConfig(object):
 	def __init__(
 			self,
-			name: str,
+			name: str = 'Base',
 			seed: int = 0,
 			full: bool = False,
 			h_file: str = 'MTLFP_tres25',
-			h_pre: str = 'simulation_dim-19_1e+05',
+			h_pre: str = 'simulation_dim-19_5e+04',
 			base_dir: str = 'Documents/MTMST',
 	):
-		super(BaseConfig, self).__init__()
+		super(_BaseConfig, self).__init__()
 		if full:
 			self.base_dir = pjoin(os.environ['HOME'], base_dir)
 			self.results_dir = pjoin(self.base_dir, 'results')
@@ -27,7 +26,8 @@ class BaseConfig(object):
 			self.h_file = pjoin(self.data_dir, f"{h_file}.h5")
 			self.h_pre = pjoin(self.data_dir, f"{h_pre}.h5")
 			self._mkdirs()
-			self._load_cellinfo()
+			self.save(self.save_dir)
+			# self._load_cellinfo()
 			self.seed = seed
 			self.set_seed()
 
@@ -73,11 +73,11 @@ class BaseConfig(object):
 		)
 		return
 
-	def get_name(self):
+	def name(self):
 		raise NotImplementedError
 
 
-class ConfigVAE(BaseConfig):
+class ConfigVAE(_BaseConfig):
 	def __init__(
 			self,
 			n_kers: int = 4,
@@ -85,24 +85,24 @@ class ConfigVAE(BaseConfig):
 			ker_sz: int = 4,
 			input_sz: int = 19,
 			n_pre_cells: int = 3,
-			n_pre_blocks: int = 1,
+			n_pre_blocks: int = 0,
 			n_post_cells: int = 3,
 			n_post_blocks: int = 1,
-			n_latent_scales: int = 2,
+			n_latent_scales: int = 3,
 			n_groups_per_scale: int = 4,
-			n_latent_per_group: int = 2,
+			n_latent_per_group: int = 5,
 			n_cells_per_cond: int = 2,
 			n_power_iter: int = 5,
+			balanced_recon: bool = True,
 			activation_fn: str = 'swish',
-			spectral_reg: bool = False,
-			weight_norm: bool = True,
+			spectral_norm: bool = True,
 			residual_kl: bool = True,
-			rot_equiv: bool = True,
+			rot_equiv: bool = False,
 			ada_groups: bool = True,
 			compress: bool = True,
 			use_bn: bool = False,
 			use_se: bool = True,
-			create: bool = True,
+			full: bool = True,
 			**kwargs,
 	):
 		self.n_kers = n_kers
@@ -117,7 +117,7 @@ class ConfigVAE(BaseConfig):
 		self.n_groups_per_scale = n_groups_per_scale
 		self.n_latent_per_group = n_latent_per_group
 		self.n_cells_per_cond = n_cells_per_cond
-		self.spectral_reg = spectral_reg
+		self.spectral_norm = spectral_norm
 		self.rot_equiv = rot_equiv
 		self.compress = compress
 		self.use_bn = use_bn
@@ -127,92 +127,93 @@ class ConfigVAE(BaseConfig):
 			is_adaptive=ada_groups,
 		)
 		super(ConfigVAE, self).__init__(
-			name=self.get_name(),
-			full=True,
+			name=self.name(),
+			full=full,
 			**kwargs,
 		)
-		self.weight_norm = weight_norm
+		self.balanced_recon = balanced_recon
 		self.activation_fn = activation_fn
 		self.n_power_iter = n_power_iter
 		self.residual_kl = residual_kl
 		self.ada_groups = ada_groups
 		self.use_se = use_se
-		if create:
-			self.save(self.save_dir)
 
 	def total_latents(self):
 		return sum(self.groups) * self.n_latent_per_group
 
-	def get_name(self):
+	def name(self):
 		name = [
 			'x'.join([
 				f"k-{self.n_kers}",
 				str(self.n_rots),
-			]).replace(' ', ''),
+			]).replace(' ', '') if self.rot_equiv
+			else f"k-{self.n_kers * self.n_rots}",
 			'x'.join([
 				f"z-{self.n_latent_per_group}",
-				str(self.groups),
+				str(list(reversed(self.groups))),
 			]).replace(' ', ''),
-			'x'.join([
+			f"cells-{self.n_cells_per_cond}",
+		]
+		if self.n_pre_blocks > 0:
+			name.append('x'.join([
 				f"pre-{self.n_pre_blocks}",
 				str(self.n_pre_cells),
-			]).replace(' ', ''),
-			'x'.join([
+			]).replace(' ', ''))
+		if self.n_post_blocks > 0:
+			name.append('x'.join([
 				f"post-{self.n_post_blocks}",
 				str(self.n_post_cells),
-			]).replace(' ', ''),
-		]
+			]).replace(' ', ''))
 		name = '_'.join(name)
 		if self.rot_equiv:
 			name = f"{name}_rot"
-		if self.compress:
-			name = f"{name}_cmprs"
+		if not self.compress:
+			name = f"{name}_notcmprs"
 		if self.use_bn:
 			name = f"{name}_bn"
 		return name
 
 
-class ConfigTrain(BaseConfig):
+class ConfigTrain(_BaseConfig):
 	def __init__(
 			self,
-			lr: float = 1e-1,
-			epochs: int = 400,
-			batch_size: int = 64,
-			warmup_epochs: int = 30,
+			lr: float = 0.01,
+			epochs: int = 1000,
+			batch_size: int = 128,
+			warmup_portion: float = 0.03,
 			optimizer: str = 'adamax',
 			optimizer_kws: dict = None,
-			lambda_init: float = 10,
-			lambda_norm: float = 1e-2,
 			lambda_anneal: bool = False,
-			balanced_recon: bool = True,
-			kl_const_coeff: float = 1e-4,
-			kl_const_portion: float = 1e-4,
+			lambda_norm: float = 1e-5,
+			lambda_init: float = 1e-12,
+			kl_beta: float = 1.0,
+			kl_beta_min: float = 1e-4,
+			kl_anneal_cycles: int = 0,
 			kl_anneal_portion: float = 0.3,
+			kl_const_portion: float = 1e-2,
 			scheduler_type: str = 'cosine',
 			scheduler_kws: dict = None,
+			spectral_reg: bool = False,
 			clip_grad: float = None,
-			chkpt_freq: int = 10,
-			eval_freq: int = 5,
-			log_freq: int = 2,
-			**kwargs,
+			chkpt_freq: int = 50,
+			eval_freq: int = 10,
+			log_freq: int = 30,
 	):
-		super(ConfigTrain, self).__init__(
-			name=self.get_name(),
-			full=False,
-			**kwargs,
-		)
+		super(ConfigTrain, self).__init__(full=False)
 		self.lr = lr
 		self.epochs = epochs
 		self.batch_size = batch_size
-		self.warmup_epochs = warmup_epochs
+		self.warmup_portion = warmup_portion
 		if lambda_anneal:
 			assert lambda_init > 0 and lambda_norm > 0
+		self.lambda_anneal = lambda_anneal
 		self.lambda_init = lambda_init
 		self.lambda_norm = lambda_norm
-		self.lambda_anneal = lambda_anneal
-		self.kl_const_coeff = kl_const_coeff
-		self.kl_const_portion = kl_const_portion
+		self.kl_beta = kl_beta
+		self.kl_beta_min = kl_beta_min
+		self.kl_anneal_cycles = kl_anneal_cycles
 		self.kl_anneal_portion = kl_anneal_portion
+		self.kl_const_portion = kl_const_portion
 		assert optimizer in _OPTIM_CHOICES,\
 			f"allowed optimizers:\n{_OPTIM_CHOICES}"
 		self.optimizer = optimizer
@@ -221,16 +222,27 @@ class ConfigTrain(BaseConfig):
 			f"allowed schedulers:\n{_SCHEDULER_CHOICES}"
 		self.scheduler_type = scheduler_type
 		self._set_scheduler_kws(scheduler_kws)
-		self.balanced_recon = balanced_recon
+		self.spectral_reg = spectral_reg
 		self.clip_grad = clip_grad
 		self.chkpt_freq = chkpt_freq
 		self.eval_freq = eval_freq
 		self.log_freq = log_freq
 
-	def get_name(self):
-		return 'TrainerVAE'
-	# TODO: create this function,
-	#  will go to comment in train()
+	def name(self):
+		return '_'.join([
+			'-'.join([
+				f"ep{self.epochs}",
+				f"b{self.batch_size}",
+				f"lr({self.lr:0.2g})"]),
+			'-'.join([
+				f"beta({self.kl_beta:0.2g})",
+				'x'.join([
+					f"anneal({self.kl_anneal_cycles}",
+					f"{self.kl_anneal_portion:0.1f})",
+				]),
+			]),
+			f"lambda({self.lambda_norm:0.2g})",
+		])
 
 	def _set_optim_kws(self, kws):
 		defaults = {
@@ -243,11 +255,11 @@ class ConfigTrain(BaseConfig):
 		return
 
 	def _set_scheduler_kws(self, kws):
-		lr_min = 1e-4
-		period = float(
-			self.epochs - 1 -
-			self.warmup_epochs
-		)
+		lr_min = 1e-5
+		period = np.round(
+			self.epochs *
+			(1 - self.warmup_portion)
+		) - 1
 		if self.scheduler_type == 'cosine':
 			defaults = {
 				'T_max': period,
@@ -288,7 +300,7 @@ def groups_per_scale(
 	assert n_groups_per_scale >= 1
 	n = n_groups_per_scale
 	g = []
-	for s in range(n_scales):
+	for _ in range(n_scales):
 		g.append(n)
 		if is_adaptive:
 			n = n // divider

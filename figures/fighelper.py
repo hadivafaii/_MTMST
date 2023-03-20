@@ -2,20 +2,251 @@ from model.utils_model import *
 from matplotlib.gridspec import GridSpec
 
 
-def show_opticflow(y: np.ndarray, n: int = 4, **kwargs):
+def show_heatmap(
+		r: np.ndarray,
+		title: str = None,
+		xticklabels: List[str] = None,
+		yticklabels: List[str] = None,
+		display: bool = True,
+		**kwargs, ):
+	defaults = dict(
+		figsize=(15, 12),
+		title_fontsize=13,
+		tick_labelsize_x=14,
+		tick_labelsize_y=14,
+		vmin=-1,
+		vmax=1,
+		cmap='bwr',
+		linewidths=0.005,
+		linecolor='silver',
+		square=True,
+		annot=True,
+		fmt='.1f',
+		annot_kws={'fontsize': 8},
+	)
+	kwargs = setup_kwargs(defaults, kwargs)
+	fig, ax = create_figure(figsize=kwargs['figsize'])
+	sns.heatmap(r, ax=ax, **filter_kwargs(sns.heatmap, kwargs))
+	if title is not None:
+		ax.set_title(title, fontsize=kwargs['title_fontsize'])
+	if xticklabels is not None:
+		ax.set_xticklabels(xticklabels)
+		ax.tick_params(
+			axis='x',
+			rotation=-90,
+			labelsize=kwargs['tick_labelsize_x'],
+		)
+	if yticklabels is not None:
+		ax.set_yticklabels(yticklabels)
+		ax.tick_params(
+			axis='y',
+			rotation=0,
+			labelsize=kwargs['tick_labelsize_y'],
+		)
+	if display:
+		plt.show()
+	else:
+		plt.close()
+	return fig, ax
+
+
+def plot_latents_hist_full(
+		z: np.ndarray,
+		scales: List[int],
+		display: bool = True,
+		**kwargs, ):
+	defaults = dict(
+		bins_divive=128,
+		figsize=None,
+		figsize_x=3.25,
+		figsize_y=2.75,
+		tight_layout=True,
+		constrained_layout=False,
+	)
+	kwargs = setup_kwargs(defaults, kwargs)
+
+	a = z.reshape((len(z), len(scales), -1))
+	nrows, ncols = a.shape[1:]
+	if kwargs['figsize'] is not None:
+		figsize = kwargs['figsize']
+	else:
+		figsize = (
+			kwargs['figsize_x'] * ncols,
+			kwargs['figsize_y'] * nrows,
+		)
+	fig, axes = create_figure(
+		nrows=nrows,
+		ncols=ncols,
+		sharey='row',
+		figsize=figsize,
+		tight_layout=kwargs['tight_layout'],
+		constrained_layout=kwargs['constrained_layout'],
+	)
+	looper = itertools.product(
+		range(nrows), range(ncols))
+	for i, j in looper:
+		x = a[:, i, j]
+		sns.histplot(
+			x,
+			stat='percent',
+			bins=len(a) // kwargs['bins_divive'],
+			ax=axes[i, j],
+		)
+		msg = r"$\mu = $" + f"{x.mean():0.2f}, "
+		msg += r"$\sigma = $" + f"{x.std():0.2f}\n"
+		msg += f"minmax = ({x.min():0.2f}, {x.max():0.2f})\n"
+		msg += f"skew = {sp_stats.skew(x):0.2f}"
+		axes[i, j].set_title(msg)
+	add_grid(axes)
+	if display:
+		plt.show()
+	else:
+		plt.close()
+	return fig, axes
+
+
+def plot_latents_hist(
+		z: np.ndarray,
+		scales: List[int],
+		display: bool = True,
+		**kwargs, ):
+	defaults = dict(
+		bins_divive=64,
+		figsize=None,
+		figsize_x=3.25,
+		figsize_y=2.75,
+		tight_layout=True,
+		constrained_layout=False,
+	)
+	kwargs = setup_kwargs(defaults, kwargs)
+
+	nrows = 2
+	ncols = int(np.ceil(len(scales) / nrows))
+	if kwargs['figsize'] is not None:
+		figsize = kwargs['figsize']
+	else:
+		figsize = (
+			kwargs['figsize_x'] * ncols,
+			kwargs['figsize_y'] * nrows,
+		)
+	fig, axes = create_figure(
+		nrows=nrows,
+		ncols=ncols,
+		figsize=figsize,
+		tight_layout=kwargs['tight_layout'],
+		constrained_layout=kwargs['constrained_layout'],
+	)
+	a = z.reshape((len(z), len(scales), -1))
+	for i in range(len(scales)):
+		ax = axes.flat[i]
+		x = a[:, i, :].ravel()
+		sns.histplot(
+			x,
+			label=f"s = {scales[i]}",
+			bins=len(a)//kwargs['bins_divive'],
+			stat='percent',
+			ax=ax,
+		)
+		msg = r"$\mu = $" + f"{x.mean():0.2f}, "
+		msg += r"$\sigma = $" + f"{x.std():0.2f}\n"
+		msg += f"minmax = ({x.min():0.2f}, {x.max():0.2f})\n"
+		msg += f"skew = {sp_stats.skew(x):0.2f}"
+		ax.set_ylabel('')
+		ax.set_title(msg)
+		ax.legend(loc='upper right')
+	for i in range(2):
+		axes[i, 0].set_ylabel('Proportion [%]')
+	trim_axs(axes, len(scales))
+	add_grid(axes)
+	if display:
+		plt.show()
+	else:
+		plt.close()
+	return fig, axes
+
+
+def plot_opticflow_hist(
+		x: np.ndarray,
+		display: bool = True, ):
+	rho, theta = vel2polar(x)
+	fig, axes = create_figure(
+		nrows=2,
+		ncols=3,
+		figsize=(12, 6),
+		constrained_layout=True,
+	)
+	sns.histplot(
+		rho.ravel(),
+		stat='percent',
+		label=r'$\rho$',
+		ax=axes[0, 0],
+	)
+	sns.histplot(
+		rho.ravel(),
+		stat='percent',
+		label=r'$\rho$',
+		ax=axes[0, 1],
+	)
+	sns.histplot(
+		np.log(rho[rho.nonzero()]),
+		stat='percent',
+		label=r'$\log \, \rho$',
+		ax=axes[0, 2],
+	)
+	sns.histplot(
+		rho.mean(1).mean(1),
+		stat='percent',
+		label='norm',
+		ax=axes[1, 0],
+	)
+	sns.histplot(
+		theta.ravel(),
+		stat='percent',
+		label=r'$\theta$',
+		ax=axes[1, 1],
+	)
+	sns.histplot(
+		x.ravel(),
+		stat='percent',
+		label='velocity',
+		ax=axes[1, 2],
+	)
+	for ax in axes.flat:
+		ax.set_ylabel('')
+		ax.legend(fontsize=15, loc='upper right')
+	for ax in axes[0, :2].flat:
+		ax.axvline(1, color='r', ls='--', lw=1.2)
+	axes[0, 2].axvline(0, color='r', ls='--', lw=1.2)
+	axes[0, 0].set_ylabel('[%]', fontsize=15)
+	axes[1, 0].set_ylabel('[%]', fontsize=15)
+	axes[0, 1].set_yscale('log')
+	axes[0, 2].set_xlim(-10, 2)
+	axes[1, 0].set_xlim(left=0)
+	if display:
+		plt.show()
+	else:
+		plt.close()
+	return fig, axes
+
+
+def show_opticflow(
+		x: np.ndarray,
+		num: int = 4,
+		display: bool = True,
+		**kwargs, ):
 	defaults = {
 		'figsize': (9, 9),
 		'tick_spacing': 3,
 	}
 	kwargs = setup_kwargs(defaults, kwargs)
-	y = to_np(y)
-	d, odd = y.shape[2] // 2, y.shape[2] % 2
+	x = to_np(x)
+	d, odd = x.shape[2] // 2, x.shape[2] % 2
 	span = range(-d, d + 1) if odd else range(-d, d)
 	ticks, ticklabels = make_ticks(
 		span, kwargs['tick_spacing'])
 	fig, axes = create_figure(
-		nrows=n,
-		ncols=n,
+		nrows=num,
+		ncols=num,
 		sharex='all',
 		sharey='all',
 		figsize=kwargs['figsize'],
@@ -24,7 +255,7 @@ def show_opticflow(y: np.ndarray, n: int = 4, **kwargs):
 	)
 	for i, ax in enumerate(axes.flat):
 		try:
-			v = y[i]
+			v = x[i]
 		except IndexError:
 			ax.remove()
 			continue
@@ -37,6 +268,10 @@ def show_opticflow(y: np.ndarray, n: int = 4, **kwargs):
 		)
 		ax.tick_params(labelsize=8)
 	ax_square(axes)
+	if display:
+		plt.show()
+	else:
+		plt.close()
 	return fig, axes
 
 

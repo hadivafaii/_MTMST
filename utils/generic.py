@@ -72,6 +72,10 @@ def avg(
 	return x
 
 
+def cat_map(x: list, axis: int = 0):
+	return map(lambda a: np.concatenate(a, axis=axis), x)
+
+
 def get_tval(
 		dof: int = 9,
 		ci: float = 0.95,

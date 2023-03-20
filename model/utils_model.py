@@ -6,12 +6,42 @@ from sklearn.model_selection import KFold
 from .configuration import ConfigVAE, ConfigTrain
 
 
-def kl_coeff(step, total_step, constant_step, min_kl_coeff):
-	return max(min((step - constant_step) / total_step, 1.0), min_kl_coeff)
+def beta_anneal_cosine(
+		n_iters: int,
+		start: float = 0.0,
+		stop: float = 1.0,
+		n_cycles: int = 4,
+		portion: float = 0.5,
+		beta: float = 1.0, ):
+	period = n_iters / n_cycles
+	step = (stop-start) / (period*portion)
+	betas = np.ones(n_iters) * beta
+	for c in range(n_cycles):
+		v, i = start, 0
+		while v <= stop:
+			val = (1 - np.cos(v*np.pi)) * beta / 2
+			betas[int(i+c*period)] = val
+			v += step
+			i += 1
+	return betas
 
 
-def kl_balancer(kl_all, coeff=1.0, alpha=None):
-	if alpha is not None and coeff < 1.0:
+def beta_anneal_linear(
+		n_iters: int,
+		beta: float = 1,
+		anneal_portion: float = 0.3,
+		constant_portion: float = 0,
+		min_beta: float = 1e-4, ):
+	betas = np.ones(n_iters) * beta
+	a = int(np.ceil(constant_portion * n_iters))
+	b = int(np.ceil((constant_portion + anneal_portion) * n_iters))
+	betas[:a] = min_beta
+	betas[a:b] = np.linspace(min_beta, beta, b - a)
+	return betas
+
+
+def kl_balancer(kl_all, alpha=None, coeff=1.0, beta=1.0):
+	if alpha is not None and coeff < beta:
 		alpha = alpha.unsqueeze(0)
 
 		kl_all = torch.stack(kl_all, dim=1)
@@ -19,7 +49,8 @@ def kl_balancer(kl_all, coeff=1.0, alpha=None):
 		total_kl = torch.sum(kl_coeff_i)
 
 		kl_coeff_i = kl_coeff_i / alpha * total_kl
-		kl_coeff_i = kl_coeff_i / torch.mean(kl_coeff_i, dim=1, keepdim=True)
+		kl_coeff_i = kl_coeff_i / torch.mean(
+			kl_coeff_i, dim=1, keepdim=True)
 		kl = torch.sum(kl_all * kl_coeff_i.detach(), dim=1)
 
 		# for reporting
@@ -33,15 +64,20 @@ def kl_balancer(kl_all, coeff=1.0, alpha=None):
 	return coeff * kl, kl_coeffs, kl_vals
 
 
-def kl_per_group(kl_all):
+def kl_per_group(kl_all) -> (torch.Tensor,) * 2:
 	kl_vals = torch.mean(kl_all, dim=0)
-	kl_coeff_i = torch.abs(kl_all)
-	kl_coeff_i = torch.mean(kl_coeff_i, dim=0, keepdim=True) + 0.01
-
+	kl_coeff_i = torch.mean(
+		torch.abs(kl_all),
+		keepdim=True,
+		dim=0,
+	) + 0.01
 	return kl_coeff_i, kl_vals
 
 
-def kl_balancer_coeff(groups: List[int], fun: str, device: torch.device = None):
+def kl_balancer_coeff(
+		groups: List[int],
+		fun: str,
+		device: torch.device = None, ):
 	n = len(groups)
 	if fun == 'equal':
 		coeff = torch.cat([
@@ -111,16 +147,17 @@ def print_num_params(module: nn.Module):
 
 
 def load_model(
-		name: str,
-		fit: int = -1,
+		model_name: str,
+		fit_name: Union[str, int] = -1,
 		chkpt: int = -1,
+		device: str = 'cpu',
 		strict: bool = True,
 		verbose: bool = False,
-		load_dir: str = 'Documents/MTMST/models', ):
+		path: str = 'Documents/MTMST/models', ):
 	# cfg model
-	load_dir = pjoin(os.environ['HOME'], load_dir, name)
-	fname = next(s for s in os.listdir(load_dir) if 'json' in s)
-	with open(pjoin(load_dir, fname), 'r') as f:
+	path = pjoin(os.environ['HOME'], path, model_name)
+	fname = next(s for s in os.listdir(path) if 'json' in s)
+	with open(pjoin(path, fname), 'r') as f:
 		cfg = json.load(f)
 	cfg = ConfigVAE(**cfg)
 	fname = fname.split('.')[0]
@@ -131,39 +168,61 @@ def load_model(
 	else:
 		raise NotImplementedError
 	# now enter the fit folder
-	load_dir = sorted(filter(
-		os.path.isdir, [
-			pjoin(load_dir, e) for e
-			in os.listdir(load_dir)
-		]
-	))[fit]
-	files = sorted(os.listdir(load_dir))
+	if isinstance(fit_name, str):
+		path = pjoin(path, fit_name)
+	elif isinstance(fit_name, int):
+		path = sorted(filter(
+			os.path.isdir, [
+				pjoin(path, e) for e
+				in os.listdir(path)
+			]
+		), key=_sort_fn)[fit_name]
+	else:
+		raise ValueError(fit_name)
+	files = sorted(os.listdir(path))
+	# state dict
+	fname_pt = [
+		f for f in files if
+		f.split('.')[-1] == 'pt'
+	][chkpt]
+	state_dict = pjoin(path, fname_pt)
+	state_dict = torch.load(state_dict)
+	model.load_state_dict(
+		state_dict=state_dict['model'],
+		strict=strict,
+	)
+	model.eval()
 	# cfg train
 	fname = next(
 		f for f in files if
 		f.split('.')[-1] == 'json'
 	)
-	with open(pjoin(load_dir, fname), 'r') as f:
+	with open(pjoin(path, fname), 'r') as f:
 		cfg_train = json.load(f)
 	cfg_train = ConfigTrain(**cfg_train)
-	# bin
-	fname = [
-		f for f in files if
-		f.split('.')[-1] == 'bin'
-	][chkpt]
-	state_dict = pjoin(load_dir, fname)
-	state_dict = torch.load(state_dict)
-	model.load_state_dict(
-		state_dict=state_dict,
-		strict=strict,
-	)
-	model.eval()
-	meta = {
-		'fname': fname,
-		'chkpt': chkpt,
-		'dir': load_dir,
+	fname = fname.split('.')[0]
+	fname = fname.replace('Config', '')
+	if fname == 'Train':
+		from .train import TrainerVAE
+		trainer = TrainerVAE(
+			model=model,
+			cfg=cfg_train,
+			device=device,
+			verbose=verbose,
+		)
+	else:
+		raise NotImplementedError
+	trainer.optim.load_state_dict(
+		state_dict['optim'])
+	if trainer.optim_schedule is not None:
+		trainer.optim_schedule.load_state_dict(
+			state_dict.get('scheduler', {}))
+	metadata = {
+		**state_dict['metadata'],
+		'file': fname_pt,
+		'path': path,
 	}
-	return model, cfg_train, meta
+	return trainer, metadata
 
 
 def null_adj_ll(
@@ -292,9 +351,23 @@ def skew(x: np.ndarray, axis: int = 0):
 	return s
 
 
-def vel2polar(a: np.ndarray, eps: float = 1e-10):
-	vx, vy = a[..., 0], a[..., 1]
-	rho = sp_lin.norm(a, ord=2, axis=-1)
+def vel2polar(
+		a: np.ndarray,
+		axis: int = None,
+		eps: float = 1e-10, ):
+	if axis is None:
+		s = a.shape
+		if collections.Counter(s)[2] != 1:
+			msg = f"provide axis, bad shape:\n{s}"
+			raise RuntimeError(msg)
+		axis = next(
+			i for i, d in
+			enumerate(s)
+			if d == 2
+		)
+	vx = np.take(a, 0, axis=axis)
+	vy = np.take(a, 1, axis=axis)
+	rho = sp_lin.norm(a, axis=axis)
 	phi = np.arccos(vx / np.maximum(rho, eps))
 	phi[vy < 0] = 2 * np.pi - phi[vy < 0]
 	phi[rho == 0] = np.nan
@@ -332,19 +405,6 @@ def polar2cart(r: np.ndarray):
 	return out
 
 
-def self2polar(
-		a: np.ndarray,
-		b: np.ndarray,
-		dtype=float, ):
-	ta = np.tan(a, dtype=dtype)
-	tb = np.tan(b, dtype=dtype)
-	theta = np.sqrt(ta**2 + tb**2)
-	theta = np.arctan(theta, dtype=dtype)
-	phi = np.arctan2(tb, ta, dtype=dtype)
-	phi[phi < 0] += 2 * np.pi
-	return theta, phi
-
-
 def _check_input(e: np.ndarray):
 	if not isinstance(e, np.ndarray):
 		e = np.array(e)
@@ -357,3 +417,22 @@ def _check_input(e: np.ndarray):
 	else:
 		e = flatten_arr(e)
 	return e, shape
+
+
+def _sort_fn(f: str):
+	f = f.split('(')[-1].split(')')[0]
+	ymd, hm = f.split(',')
+	yy, mm, dd = ymd.split('_')
+	h, m = hm.split(':')
+	yy, mm, dd, h, m = map(
+		lambda s: int(s),
+		[yy, mm, dd, h, m],
+	)
+	x = (
+		yy * 1e8 +
+		mm * 1e6 +
+		dd * 1e4 +
+		h * 1e2 +
+		m
+	)
+	return x

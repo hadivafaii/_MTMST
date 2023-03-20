@@ -5,13 +5,27 @@ from torch.utils.data.dataset import Dataset
 class ROFL(Dataset):
 	def __init__(
 			self,
-			x: np.ndarray,
+			g: h5py.Group,
+			device: torch.device = None,
 			transform=None,
 	):
+		self._init_factors(g)
+		x = np.array(g['x'], dtype=float)
 		self.x = np.transpose(
 			x, (0, 3, 1, 2))
 		self.norm = sp_lin.norm(
 			x, axis=-1).sum(-1).sum(-1)
+		if device is not None:
+			self.x = torch.tensor(
+				data=self.x,
+				device=device,
+				dtype=torch.float,
+			)
+			self.norm = torch.tensor(
+				data=self.norm,
+				device=device,
+				dtype=torch.float,
+			)
 		self.transform = transform
 
 	def __len__(self):
@@ -23,6 +37,35 @@ class ROFL(Dataset):
 		if self.transform is not None:
 			x = self.transform(x)
 		return x, n
+
+	def _init_factors(self, g):
+		fix = np.array(g['fix'], dtype=float)
+		vel_slf = np.array(g['vel_slf'], dtype=float)
+		vel_obj = np.array(g['vel_obj'], dtype=float)
+		pos_obj = np.array(g['pos_obj'], dtype=float)
+		pos_obj[0] -= fix[:, 0]
+		pos_obj[1] -= fix[:, 1]
+		factors = np_nans((len(fix), 11))
+		factors[:, :2] = fix
+		factors[:, 2:5] = vel_slf.T
+		factors[:, 5:8] = vel_obj.T
+		factors[:, 8:11] = pos_obj.T
+		assert not np.isnan(factors).sum()
+		self.factors = factors
+		self.factor_names = {
+			0: 'fix_x',
+			1: 'fix_y',
+			2: 'v_self_x',
+			3: 'v_self_y',
+			4: 'v_self_z',
+			5: 'v_obj_x',
+			6: 'v_obj_y',
+			7: 'v_obj_z',
+			8: 'pos_obj_x',
+			9: 'pos_obj_y',
+			10: 'pos_obj_z',
+		}
+		return
 
 
 def setup_repeat_data(

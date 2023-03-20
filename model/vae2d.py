@@ -1,8 +1,6 @@
 from .common import *
 from .distributions import Normal
 
-_MULT = 2
-
 
 class VAE(Module):
 	def __init__(self, cfg: ConfigVAE, **kwargs):
@@ -13,59 +11,38 @@ class VAE(Module):
 
 	def forward(self, x):
 		s = self.stem(x)
-		# print(f'after stem, s: {s.size()}')
 
-		# perform pre-processing
 		for cell in self.pre:
 			s = cell(s)
 
-		# print(f'after pre, s: {s.size()}')
-
 		# run the main encoder tower
-		combiners_enc = []
-		combiners_s = []
+		comb_enc = []
+		comb_s = []
 		for cell in self.enc_tower:
 			if isinstance(cell, CombinerEnc):
-				combiners_enc.append(cell)
-				combiners_s.append(s)
+				comb_enc.append(cell)
+				comb_s.append(s)
 			else:
 				s = cell(s)
-			# print('after', type(cell).__name__, s.size(), torch.isnan(s).sum())
-			# print(s.size())
 
 		# reverse combiner cells and their input for decoder
-		combiners_enc.reverse()
-		combiners_s.reverse()
-
-		# print(s.size(), torch.isnan(s).sum())
+		comb_enc.reverse()
+		comb_s.reverse()
 
 		idx = 0
-		ftr = self.enc0(s)  # this reduces the channel dimension
-		# print('hi', idx, ftr.shape)
-		# print(ftr)
-		param0 = self.enc_sampler[idx](ftr)
-		# print('hi', idx, param0.shape)
-		# print(param0)
+		param0 = self.enc_sampler[idx](s)
 		mu_q, logsig_q = torch.chunk(param0, 2, dim=1)
 		dist = Normal(mu_q, logsig_q)  # for the first approx. posterior
-		z, _ = dist.sample()
-		# print(z)
-		# log_q_conv = dist.log_p(z)
-		all_log_q = [dist.log_p(z)]  # was: [log_q_conv]
-		all_q = [dist]
+		z = dist.sample()
+		q_all = [dist]
 		latents = [z]
-
-		# print('top')
-		# print(f"idx = {idx}, z size: {z.size()}")
 
 		# prior for z0
 		dist = Normal(
 			mu=torch.zeros_like(z),
 			logsigma=torch.zeros_like(z),
 		)
-		log_p_conv = dist.log_p(z)
-		all_log_p = [log_p_conv]
-		all_p = [dist]
+		p_all = [dist]
 
 		# begin decoder pathway
 		s = self.prior_ftr0.unsqueeze(0)
@@ -76,50 +53,36 @@ class VAE(Module):
 					# form prior
 					param = self.dec_sampler[idx - 1](s)
 					mu_p, logsig_p = torch.chunk(param, 2, dim=1)
+					dist = Normal(mu_p, logsig_p)
+					p_all.append(dist)
 
 					# form encoder
-					# print(f"ftr   ||   idx = {idx},   enc-s: {combiners_s[idx - 1].size()},   s: {s.size()}")
-					ftr = combiners_enc[idx - 1](combiners_s[idx - 1], s)
-					param = self.enc_sampler[idx](ftr)
+					param = comb_enc[idx - 1](comb_s[idx - 1], s)
+					param = self.enc_sampler[idx](param)
 					mu_q, logsig_q = torch.chunk(param, 2, dim=1)
 					if self.cfg.residual_kl:
-						dist = Normal(mu_p + mu_q, logsig_p + logsig_q)
+						dist = Normal(
+							mu=mu_q + mu_p,
+							logsigma=logsig_q,
+						)
 					else:
 						dist = Normal(mu_q, logsig_q)
-					z, _ = dist.sample()
+					q_all.append(dist)
+					z = dist.sample()
 					latents.append(z)
-					# if self.cfg.compress:
-					# e = (-1,) * 2 + (s.size(-1),) * 2
-					# z = z.expand(e)
-					# log_q_conv = dist.log_p(z)
-					all_log_q.append(dist.log_p(z))
-					all_q.append(dist)
-
-					# evaluate log_p(z)
-					dist = Normal(mu_p, logsig_p)
-					log_p_conv = dist.log_p(z)
-					all_log_p.append(log_p_conv)
-					all_p.append(dist)
-
 				# 'combiner_dec'
-				# print(f"CombinerDec   ||   idx = {idx},   s: {s.size()},   z: {z.size()}")
 				s = cell(s, self.expand[idx](z))
 				idx += 1
 			else:
 				s = cell(s)
 
 		if self.vanilla:
-			if self.verbose:
-				print('vailla')
 			s = self.stem_decoder(z)
 
 		for cell in self.post:
 			s = cell(s)
 
-		# compute kl
-		log_q, log_p, kl_all, kl_diag = self.loss_kl(
-			all_q, all_p, all_log_q, all_log_p)
-		return self.out(s), latents, log_q, log_p, kl_all, kl_diag
+		return self.out(s), self._cat(latents), q_all, p_all
 
 	def sample(self, n: int, t: float = 1.0, device: torch.device = None):
 		z0_sz = [n] + self.z0_sz
@@ -129,7 +92,8 @@ class VAE(Module):
 			mu = mu.to(device)
 			logsigma = logsigma.to(device)
 		dist = Normal(mu, logsigma, temp=t)
-		z, _ = dist.sample()
+		z = dist.sample()
+		p_all = [dist]
 		latents = [z]
 
 		idx = 0
@@ -142,9 +106,9 @@ class VAE(Module):
 					param = self.dec_sampler[idx - 1](s)
 					mu, logsigma = torch.chunk(param, 2, dim=1)
 					dist = Normal(mu, logsigma, t)
-					z, _ = dist.sample()
+					p_all.append(dist)
+					z = dist.sample()
 					latents.append(z)
-
 				# 'combiner_dec'
 				s = cell(s, self.expand[idx](z))
 				idx += 1
@@ -157,30 +121,74 @@ class VAE(Module):
 		for cell in self.post:
 			s = cell(s)
 
-		return self.out(s), latents
+		return self.out(s), self._cat(latents), p_all
+
+	def _cat(self, latents):
+		if self.cfg.compress:
+			return torch.cat(latents, dim=1).squeeze()
+		else:
+			return latents
+
+	def latent_scales(self):
+		scales = itertools.chain.from_iterable([
+			[scale] * num for num, scale in
+			zip(self.cfg.groups, self.scales)
+		])
+		scales = list(scales)
+		scales.reverse()
+		# level ids
+		idx, lvl_ids = 0, {}
+		for s, c in collections.Counter(scales).items():
+			for g in range(c):
+				start = idx * self.cfg.n_latent_per_group
+				stop = start + self.cfg.n_latent_per_group
+				key = f"idx-{idx}_scale-{s}_group-{g}"
+				lvl_ids[key] = range(start, stop)
+				idx += 1
+		return scales, lvl_ids
+
+	def loss_recon(self, x, y, w=None):
+		l1 = self.l1_recon(x, y)
+		l2 = self.l2_recon(x, y)
+		l1 = torch.sum(l1, dim=[1, 2, 3])
+		l2 = torch.sum(l2, dim=[1, 2, 3])
+		epe = endpoint_error(x, y)
+		if self.cfg.balanced_recon:
+			if w is None:
+				w = torch.sum(torch.linalg.norm(
+					x, dim=1), dim=[1, 2]).pow(-1)
+			l1 = l1 * w / w.mean()
+			l2 = l2 * w / w.mean()
+			epe = epe * w / w.mean()
+		cos = 1 - self.cos_recon(x, y)
+		cos = torch.sum(cos, dim=[1, 2])
+		return l1, l2, epe, cos
 
 	@staticmethod
-	def loss_kl(all_q, all_p, all_log_q, all_log_p):
+	def loss_kl(q_all, p_all):
 		kl_all, kl_diag = [], []
-		tot_log_q, tot_log_p = 0., 0.
-		for q, p, log_q, log_p in zip(all_q, all_p, all_log_q, all_log_p):
-			kl_per_var = q.kl(p)
-			# if not self.cfg.compress:
-			kl_per_var = torch.sum(kl_per_var, dim=[2, 3])
-			kl_diag.append(torch.mean(kl_per_var, dim=0))  # TODO: mean? or sum?
-			kl_all.append(torch.sum(kl_per_var, dim=1))
-			# if not self.cfg.compress:
-			tot_log_q += torch.sum(log_q, dim=[1, 2, 3])
-			tot_log_p += torch.sum(log_q, dim=[1, 2, 3])
-			# else:
-			# tot_log_q += torch.sum(log_q, dim=1)
-			# tot_log_p += torch.sum(log_q, dim=1)
-		return tot_log_q, tot_log_p, kl_all, kl_diag
+		for q, p in zip(q_all, p_all):
+			kl = q.kl(p)
+			kl = torch.sum(kl, dim=[2, 3])
+			kl_all.append(torch.sum(kl, dim=1))
+			kl_diag.append(torch.mean(kl, dim=0))
+		return kl_all, kl_diag
 
-	def loss_spectral(self, device: torch.device = None):
+	def loss_weight(self):
+		return self.l1_weight(
+			torch.cat(self.all_log_norm), self.w_tgt)
+
+	def loss_spectral(self, device: torch.device = None, name: str = 'w'):
 		weights = collections.defaultdict(list)
-		for lay in self.all_conv_layers:
-			w = lay.w.view(lay.w.size(0), -1)
+		for layer in self.all_conv_layers:
+			w = getattr(layer, name)
+			if isinstance(layer, DeConv2D):
+				w = w.transpose(0, 1)  # 0: out_channels
+				w = w.reshape(w.size(0), -1)
+			elif isinstance(layer, Conv2D):
+				w = w.view(w.size(0), -1)
+			else:
+				raise NotImplementedError()
 			weights[w.size()].append(w)
 		weights = {
 			k: torch.stack(v) for
@@ -204,9 +212,9 @@ class VAE(Module):
 					n_iter = 100 * self.cfg.n_power_iter
 
 				for j in range(n_iter):
-					# Spectral norm of weight equals to `u^T W v`, where `u` and `v`
+					# Spectral norm of weight equals to 'u^T W v', where 'u' and 'v'
 					# are the first left and right singular vectors.
-					# This power iteration produces approximations of `u` and `v`.
+					# This power iteration produces approximations of 'u' and 'v'.
 					self.sr_v[i] = F.normalize(
 						torch.matmul(self.sr_u[i].unsqueeze(1), w).squeeze(1),
 						dim=1, eps=1e-3,
@@ -222,9 +230,6 @@ class VAE(Module):
 			sr_loss += torch.sum(sigma)
 		return sr_loss
 
-	def loss_weight(self):
-		return torch.abs(torch.cat(self.all_log_norm)).sum()
-
 	def _init(self):
 		self.vanilla = (
 				self.cfg.n_latent_scales == 1 and
@@ -234,7 +239,6 @@ class VAE(Module):
 			act_fn=self.cfg.activation_fn,
 			use_bn=self.cfg.use_bn,
 			use_se=self.cfg.use_se,
-			normalize_dim=0,
 		)
 		self._init_stem()
 		self._init_sizes()
@@ -243,30 +247,32 @@ class VAE(Module):
 			mult = self._init_enc(mult)
 		else:
 			self.enc_tower = []
-		mult = self._init_enc0(mult)
+		# mult = self._init_enc0(mult)
 		self._init_sampler(mult)
 		if not self.vanilla:
 			mult = self._init_dec(mult)
 			self.stem_decoder = None
 		else:
 			self.dec_tower = []
-			self.stem_decoder = Conv2D(
-				normalize_dim=self.kws['normalize_dim'],
-				in_channels=self.cfg.n_latent_per_group,
-				out_channels=int(mult * self.n_ch),
-				kernel_size=1,
-			)
+			if self.cfg.compress:
+				raise NotImplementedError
+			else:
+				self.stem_decoder = Conv2D(
+					in_channels=self.cfg.n_latent_per_group,
+					out_channels=int(mult * self.n_ch),
+					kernel_size=1,
+				)
 		mult = self._init_post(mult)
-		self._init_normalization()
 		self._init_output(mult)
-
+		self._init_norm()
+		self._init_loss()
 		return
 
 	def _init_sizes(self):
 		self.n_ch = self.cfg.n_kers * self.cfg.n_rots
 		input_sz = self.cfg.input_sz - self.cfg.ker_sz + 1
 		self.scales = [
-			input_sz // _MULT ** (i + self.cfg.n_pre_blocks)
+			input_sz // MULT ** (i + self.cfg.n_pre_blocks)
 			for i in range(self.cfg.n_latent_scales)
 		]
 		self.z0_sz = [self.cfg.n_latent_per_group]
@@ -294,10 +300,15 @@ class VAE(Module):
 			self.stem = Conv2D(
 				in_channels=2,
 				out_channels=self.cfg.n_kers * self.cfg.n_rots,
-				normalize_dim=self.kws['normalize_dim'],
 				kernel_size=self.cfg.ker_sz,
 				padding='valid',
 			)
+			# self.stem = nn.Conv2d(
+			# 	in_channels=2,
+			# 	out_channels=self.cfg.n_kers * self.cfg.n_rots,
+			# 	kernel_size=self.cfg.ker_sz,
+			# 	padding='valid',
+			# )
 		return
 
 	def _init_pre(self, mult):
@@ -309,7 +320,7 @@ class VAE(Module):
 		for _, c in looper:
 			ch = int(self.n_ch * mult)
 			if c == self.cfg.n_pre_cells - 1:
-				co = _MULT * ch
+				co = MULT * ch
 				cell = Cell(
 					ci=ch,
 					co=co,
@@ -317,7 +328,7 @@ class VAE(Module):
 					cell_type='down_pre',
 					**self.kws,
 				)
-				mult *= _MULT
+				mult *= MULT
 			else:
 				cell = Cell(
 					ci=ch,
@@ -355,38 +366,19 @@ class VAE(Module):
 			if s < self.cfg.n_latent_scales - 1:
 				cell = Cell(
 					ci=ch,
-					co=ch * _MULT,
+					co=ch * MULT,
 					n_nodes=2,
 					cell_type='down_enc',
 					**self.kws,
 				)
 				enc.append(cell)
-				mult *= _MULT
+				mult *= MULT
 		self.enc_tower = enc
-		return mult
-
-	def _init_enc0(self, mult):
-		ch = int(self.n_ch * mult)
-		kws = dict(
-			normalize_dim=self.kws['normalize_dim'],
-			in_channels=ch,
-			out_channels=ch,
-			kernel_size=1,
-			padding=0,
-		)
-		self.enc0 = nn.Sequential(
-			nn.ELU(inplace=True),
-			Conv2D(**kws),
-			nn.ELU(inplace=True),
-		)
 		return mult
 
 	def _init_sampler(self, mult):
 		co = 2 * self.cfg.n_latent_per_group
-		kws = dict(
-			normalize_dim=1,
-			out_channels=co,
-		)
+		kws = dict(out_channels=co)
 		enc_sampler = nn.ModuleList()
 		dec_sampler = nn.ModuleList()
 		expand = nn.ModuleList()
@@ -396,43 +388,31 @@ class VAE(Module):
 			kws['in_channels'] = ch
 			for g in range(self.cfg.groups[s_inv]):
 				if self.cfg.compress:
-					expand.append(DeConv2D(
+					expand.append(nn.ConvTranspose2d(
 						in_channels=self.cfg.n_latent_per_group,
 						out_channels=self.cfg.n_latent_per_group,
 						kernel_size=self.scales[s_inv],
-						normalize_dim=0,
 					))
-					# expand.append(Expand(
-					# 	normalize=self.kws['normalize'],
-					# 	zdim=self.cfg.n_latent_per_group,
-					# 	sdim=self.scales[s_inv],
-					# ))
 					kws['kernel_size'] = self.scales[s_inv]
 					kws['padding'] = 0
 				else:
 					expand.append(nn.Identity())
 					kws['kernel_size'] = 3
 					kws['padding'] = 1
-				enc_sampler.append(Conv2D(**kws))
-				# enc_sampler.append(Conv2D(**kws))
-				# expand.append(nn.Identity())
+				enc_sampler.append(nn.Conv2d(**kws))
 				if s == 0 and g == 0:
 					continue  # 1st group: we used a fixed standard Normal
 				if self.cfg.compress:
 					kws['kernel_size'] = self.scales[s_inv]
 					kws['padding'] = 0
-					# dec_sampler.append(nn.Sequential(
-					# 	nn.ELU(inplace=True),
-					# 	Linear(**kws_lin),
-					# ))
 				else:
 					kws['kernel_size'] = 1
 					kws['padding'] = 0
 				dec_sampler.append(nn.Sequential(
 					nn.ELU(inplace=True),
-					Conv2D(**kws),
+					nn.Conv2d(**kws),
 				))
-			mult /= _MULT
+			mult /= MULT
 		self.enc_sampler = enc_sampler
 		self.dec_sampler = dec_sampler
 		self.expand = expand
@@ -457,17 +437,16 @@ class VAE(Module):
 					ci2=self.cfg.n_latent_per_group,
 					co=ch,
 				))
-
 			# down cells after finishing a scale
 			if s < self.cfg.n_latent_scales - 1:
 				dec.append(Cell(
 					ci=ch,
-					co=int(ch / _MULT),
+					co=int(ch / MULT),
 					n_nodes=1,
 					cell_type='up_dec',
 					**self.kws,
 				))
-				mult /= _MULT
+				mult /= MULT
 		self.dec_tower = dec
 		return mult
 
@@ -475,8 +454,7 @@ class VAE(Module):
 		post = nn.ModuleList()
 		upsample = nn.Upsample(
 				size=self.cfg.input_sz,
-				mode='bilinear',
-				align_corners=True,
+				mode='nearest',
 			)
 		looper = itertools.product(
 			range(self.cfg.n_post_blocks),
@@ -485,7 +463,7 @@ class VAE(Module):
 		for b, c in looper:
 			ch = int(self.n_ch * mult)
 			if c == 0:
-				co = int(ch / _MULT)
+				co = int(ch / MULT)
 				cell = Cell(
 					ci=ch,
 					co=co,
@@ -493,7 +471,7 @@ class VAE(Module):
 					cell_type='up_post',
 					**self.kws,
 				)
-				mult /= _MULT
+				mult /= MULT
 			else:
 				cell = Cell(
 					ci=ch,
@@ -511,48 +489,47 @@ class VAE(Module):
 		return mult
 
 	def _init_output(self, mult):
-		self.out = nn.Sequential(
-			nn.ELU(inplace=True),
-			nn.Conv2d(
-				in_channels=int(self.n_ch * mult),
-				out_channels=2,
-				kernel_size=3,
-				padding=1),
-		)
+		self.out = nn.Conv2d(
+			in_channels=int(self.n_ch * mult),
+			out_channels=2,
+			kernel_size=3,
+			padding=1)
 		return
 
-	def _init_normalization(self):
+	def _init_norm(self, apply_norm: List[str] = None):
+		apply_norm = apply_norm if apply_norm else [
+			'stem', 'pre', 'enc_tower', 'dec_tower']
 		self.all_log_norm = []
 		self.all_conv_layers = []
-		for n, lay in self.named_modules():
-			if isinstance(lay, (Conv2D, DeConv2D)):
-				self.all_log_norm.append(lay.log_weight_norm)
-				self.all_conv_layers.append(lay)
+		for child_name, child in self.named_children():
+			for m in child.modules():
+				if isinstance(m, (Conv2D, DeConv2D)):
+					self.all_conv_layers.append(m)
+					if child_name in apply_norm:
+						self.all_log_norm.append(
+							m.log_weight_norm)
 		self.sr_u, self.sr_v = {}, {}
-		if not self.cfg.spectral_reg:
+		if self.cfg.spectral_norm:
 			fn = AddNorm(
 				norm='spectral',
 				types=(nn.Conv2d, nn.ConvTranspose2d),
 				n_power_iterations=self.cfg.n_power_iter,
+				name='weight',
 			).get_fn()
 			self.apply(fn)
 		return
 
-
-class Expand(nn.Module):
-	def __init__(self, zdim: int, sdim: int, normalize: bool):
-		super(Expand, self).__init__()
-		self.linear = Linear(
-			in_features=zdim,
-			out_features=zdim * sdim ** 2,
-			normalize=normalize,
-		)
-		self.shape = (-1, zdim, sdim, sdim)
-
-	def forward(self, z):
-		z = self.linear(z.squeeze())
-		z = z.view(self.shape)
-		return z
+	def _init_loss(self):
+		self.cos_recon = nn.CosineSimilarity(dim=1)
+		self.l2_recon = nn.MSELoss(reduction='none')
+		self.l1_recon = nn.SmoothL1Loss(
+			beta=0.1, reduction='none')
+		self.l1_weight = nn.SmoothL1Loss(
+			beta=0.1, reduction='mean')
+		w_tgt = torch.zeros_like(
+			torch.cat(self.all_log_norm))
+		self.register_buffer('w_tgt', w_tgt)
+		return
 
 
 class CombinerEnc(nn.Module):
@@ -562,10 +539,9 @@ class CombinerEnc(nn.Module):
 			co: int,
 	):
 		super(CombinerEnc, self).__init__()
-		self.conv = Conv2D(
+		self.conv = nn.Conv2d(
 			in_channels=ci,
 			out_channels=co,
-			normalize_dim=0,
 			kernel_size=1,
 		)
 
@@ -581,164 +557,12 @@ class CombinerDec(nn.Module):
 			co: int,
 	):
 		super(CombinerDec, self).__init__()
-		self.conv = Conv2D(
+		self.conv = nn.Conv2d(
 			in_channels=ci1+ci2,
 			out_channels=co,
-			normalize_dim=0,
 			kernel_size=1,
 		)
 
 	def forward(self, x1, x2):
 		x = torch.cat([x1, x2], dim=1)
 		return self.conv(x)
-
-
-class Cell(nn.Module):
-	def __init__(
-			self,
-			ci: int,
-			co: int,
-			n_nodes: int,
-			cell_type: str,
-			act_fn: str,
-			use_bn: bool,
-			use_se: bool,
-			**kwargs,
-	):
-		super(Cell, self).__init__()
-
-		self.skip = get_skip_connection(ci, _MULT, cell_type)
-		self.ops = nn.ModuleList()
-		for i in range(n_nodes):
-			op = ConvLayer(
-				ci=ci if i == 0 else co,
-				co=co,
-				stride=get_stride(cell_type, _MULT)
-				if i == 0 else 1,
-				act_fn=act_fn,
-				use_bn=use_bn,
-				**kwargs,
-			)
-			self.ops.append(op)
-		if use_se:
-			self.se = SELayer(co, act_fn)
-		else:
-			self.se = None
-
-	def forward(self, x):
-		skip = self.skip(x)
-		for i, op in enumerate(self.ops):
-			x = op(x)
-		if self.se is not None:
-			x = self.se(x)
-		return skip + 0.1 * x
-
-
-class ConvLayer(nn.Module):
-	def __init__(
-			self,
-			ci: int,
-			co: int,
-			stride: int,
-			act_fn: str,
-			use_bn: bool,
-			**kwargs,
-	):
-		super(ConvLayer, self).__init__()
-		defaults = {
-			'in_channels': ci,
-			'out_channels': co,
-			'kernel_size': 3,
-			'normalize_dim': 0,
-			'stride': abs(stride),
-			'padding': 1,
-			'dilation': 1,
-			'groups': 1,
-			'bias': True,
-		}
-		if stride == -1:
-			self.upsample = nn.Upsample(
-				scale_factor=_MULT,
-				mode='bilinear',
-				align_corners=True,
-			)
-		else:
-			self.upsample = None
-		if use_bn:
-			self.bn = nn.BatchNorm2d(ci)
-		else:
-			self.bn = None
-		self.act_fn = get_act_fn(act_fn, False)
-		kwargs = setup_kwargs(defaults, kwargs)
-		self.conv = Conv2D(**kwargs)
-
-	def forward(self, x):
-		if self.bn is not None:
-			x = self.bn(x)
-		if self.act_fn is not None:
-			x = self.act_fn(x)
-		if self.upsample is not None:
-			x = self.upsample(x)
-		x = self.conv(x)
-		return x
-
-
-class RotConv2d(nn.Conv2d):
-	def __init__(
-			self,
-			co: int,
-			n_rots: int,
-			kernel_size: Union[int, Iterable[int]],
-			bias: bool = True,
-			**kwargs,
-	):
-		super(RotConv2d, self).__init__(
-			in_channels=2,
-			out_channels=co,
-			kernel_size=kernel_size,
-			padding='valid',
-			bias=bias,
-			**kwargs,
-		)
-		self.n_rots = n_rots
-		self._build_rot_mat()
-		if bias:
-			bias = nn.Parameter(
-				torch.zeros(co * n_rots))
-		else:
-			bias = None
-		self.bias = bias
-
-	def forward(self, x):
-		return F.conv2d(
-			input=x,
-			weight=self._get_augmented_weight(),
-			bias=self.bias,
-			stride=self.stride,
-			padding=self.padding,
-			dilation=self.dilation,
-			groups=self.groups,
-		)
-
-	def _build_rot_mat(self):
-		thetas = np.deg2rad(np.arange(
-			0, 360, 360 / self.n_rots))
-		u = np.array([0.0, 0.0, 1.0]).reshape(1, -1)
-		u = np.repeat(u, self.n_rots, 0)
-		u *= thetas.reshape(-1, 1)
-		r = Rotation.from_rotvec(u)
-		r = r.as_matrix()
-		r = torch.tensor(
-			data=r[:, :2, :2],
-			dtype=torch.float,
-		)
-		self.register_buffer('rot_mat', r)
-		return
-
-	def _get_augmented_weight(self):
-		w = torch.einsum(
-			'rij, kjxy -> krixy',
-			self.rot_mat,
-			self.weight,
-		)
-		return w.flatten(end_dim=1)
