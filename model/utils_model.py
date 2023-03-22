@@ -51,6 +51,7 @@ def kl_balancer(kl_all, alpha=None, coeff=1.0, beta=1.0):
 		kl_coeff_i = kl_coeff_i / alpha * total_kl
 		kl_coeff_i = kl_coeff_i / torch.mean(
 			kl_coeff_i, dim=1, keepdim=True)
+		kl_coeff_i *= beta
 		kl = torch.sum(kl_all * kl_coeff_i.detach(), dim=1)
 
 		# for reporting
@@ -59,8 +60,7 @@ def kl_balancer(kl_all, alpha=None, coeff=1.0, beta=1.0):
 		kl_all = torch.stack(kl_all, dim=1)
 		kl_vals = torch.mean(kl_all, dim=0)
 		kl = torch.sum(kl_all, dim=1)
-		kl_coeffs = torch.ones(size=(len(kl_vals),))
-
+		kl_coeffs = beta * torch.ones(len(kl_vals))
 	return coeff * kl, kl_coeffs, kl_vals
 
 

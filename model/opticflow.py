@@ -98,6 +98,15 @@ class OpticFlow(object):
 		self._compute_xyz()
 		return self
 
+	def compute_x_env(self, z_env: np.ndarray = None):
+		if z_env is None:
+			z_env = self.z_bg * np.ones((self.num, self.dim ** 2))
+		x_env = np.zeros((self.num, self.dim, self.dim, 3))
+		for i in range(self.num):
+			_x = _replace_z(flatten_arr(self.gamma[i]), z_env[i])
+			x_env[i] = _x.reshape(self.dim, self.dim, 3)
+		return x_env
+
 	def sample_z(self):
 		return self.rng.uniform(
 			low=self.obj_zlim[0],
@@ -178,8 +187,8 @@ class OpticFlow(object):
 		return mask.astype(bool)
 
 	def _compute_obj_v(self, obj_masks: dict):
-		x_env = self.apply_rot(self.x, transpose=False)
-		v_tr = np.zeros_like(x_env)
+		z_env = np.zeros((self.num, self.dim ** 2))
+		v_tr = np.zeros((self.num, self.dim, self.dim, 3))
 		for i in range(self.num):
 			obj_z = {
 				obj_i: obj.pos[i, 2] for
@@ -190,12 +199,15 @@ class OpticFlow(object):
 				key=lambda t: t[1],
 				reverse=True,
 			))
+			z_fused = self.z_bg * np.ones(self.dim ** 2)
 			for obj_i, z in zip(order, obj_z):
 				m = obj_masks[obj_i][i]
-				x_env[i, ..., -1][m] = z
+				z_fused[m.ravel()] = z
 				for j in range(3):
 					v = self.objects[obj_i].v[i, j]
 					v_tr[i, ..., j][m] = v
+			z_env[i] = z_fused
+		x_env = self.compute_x_env(z_env)
 		x_env = self.apply_rot(x_env, transpose=True)
 		v_tr = self.apply_rot(v_tr, transpose=True)
 		return x_env, v_tr
@@ -241,6 +253,24 @@ class OpticFlow(object):
 		return
 
 	def _compute_xyz(self):
+		"""
+		# gamma:	points in real space corresponding
+		# 			to each retinal grid point with a
+		#			self z value of 1.
+		# x_bg:		measured in real coordinate system.
+		# x: 		measured in self coordinate system.
+		"""
+		gamma = 'aij, xyj -> axyi'
+		self.gamma = np.einsum(
+			gamma, self.R, self.tan)
+		x_bg = self.compute_x_env()
+		assert np.all(np.round(
+			x_bg[..., -1], decimals=7,
+		) == self.z_bg), "wall is flat"
+		self.x = self.apply_rot(x_bg, transpose=True)
+		return
+
+	def _compute_xyz_old(self):
 		"""
 		# x: 		measured in self coordinate system
 		# x_bg:		measured in real coordinate system

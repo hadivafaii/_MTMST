@@ -259,9 +259,9 @@ class TrainerVAE(_BaseTrainer):
 			kl_all, kl_diag = self.model.loss_kl(q, p)
 			# balance kl
 			balanced_kl, kl_coeffs, kl_vals = kl_balancer(
-				coeff=self.betas[gstep],
 				kl_all=kl_all,
 				alpha=self.alphas,
+				coeff=self.betas[gstep],
 				beta=self.cfg.kl_beta,
 			)
 			nelbo_batch = loss_recon + balanced_kl
