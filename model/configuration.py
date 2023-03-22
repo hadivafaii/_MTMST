@@ -2,7 +2,7 @@ from utils.generic import *
 from utils.process import load_cellinfo
 
 
-_OPTIM_CHOICES = ['adamw', 'adamax', 'sgd']
+_OPTIM_CHOICES = ['adamax', 'adam', 'adamw', 'radam', 'sgd']
 _SCHEDULER_CHOICES = ['cosine', 'exponential', 'step', 'cyclic', None]
 
 
@@ -84,6 +84,8 @@ class ConfigVAE(_BaseConfig):
 			n_rots: int = 8,
 			ker_sz: int = 4,
 			input_sz: int = 19,
+			n_enc_nodes: int = 2,
+			n_dec_nodes: int = 1,
 			n_pre_cells: int = 3,
 			n_pre_blocks: int = 0,
 			n_post_cells: int = 3,
@@ -92,13 +94,13 @@ class ConfigVAE(_BaseConfig):
 			n_groups_per_scale: int = 4,
 			n_latent_per_group: int = 5,
 			n_cells_per_cond: int = 2,
-			n_power_iter: int = 5,
 			balanced_recon: bool = True,
 			activation_fn: str = 'swish',
-			spectral_norm: bool = True,
+			scale_init: bool = False,
 			residual_kl: bool = True,
 			rot_equiv: bool = False,
 			ada_groups: bool = True,
+			spectral_norm: int = 1,
 			compress: bool = True,
 			use_bn: bool = False,
 			use_se: bool = True,
@@ -109,6 +111,8 @@ class ConfigVAE(_BaseConfig):
 		self.n_rots = n_rots
 		self.ker_sz = ker_sz
 		self.input_sz = input_sz
+		self.n_enc_nodes = n_enc_nodes
+		self.n_dec_nodes = n_dec_nodes
 		self.n_pre_cells = n_pre_cells
 		self.n_pre_blocks = n_pre_blocks
 		self.n_post_cells = n_post_cells
@@ -133,8 +137,8 @@ class ConfigVAE(_BaseConfig):
 		)
 		self.balanced_recon = balanced_recon
 		self.activation_fn = activation_fn
-		self.n_power_iter = n_power_iter
 		self.residual_kl = residual_kl
+		self.scale_init = scale_init
 		self.ada_groups = ada_groups
 		self.use_se = use_se
 
@@ -165,6 +169,8 @@ class ConfigVAE(_BaseConfig):
 				str(self.n_post_cells),
 			]).replace(' ', ''))
 		name = '_'.join(name)
+		if self.spectral_norm:
+			name = f"{name}_sn-{self.spectral_norm}"
 		if self.rot_equiv:
 			name = f"{name}_rot"
 		if not self.compress:
@@ -183,9 +189,9 @@ class ConfigTrain(_BaseConfig):
 			warmup_portion: float = 0.03,
 			optimizer: str = 'adamax',
 			optimizer_kws: dict = None,
-			lambda_anneal: bool = False,
+			lambda_anneal: bool = True,
 			lambda_norm: float = 1e-5,
-			lambda_init: float = 1e-12,
+			lambda_init: float = 0.0,
 			kl_beta: float = 1.0,
 			kl_beta_min: float = 1e-4,
 			kl_anneal_cycles: int = 0,
@@ -194,7 +200,7 @@ class ConfigTrain(_BaseConfig):
 			scheduler_type: str = 'cosine',
 			scheduler_kws: dict = None,
 			spectral_reg: bool = False,
-			clip_grad: float = None,
+			grad_clip: float = None,
 			chkpt_freq: int = 50,
 			eval_freq: int = 10,
 			log_freq: int = 30,
@@ -204,8 +210,6 @@ class ConfigTrain(_BaseConfig):
 		self.epochs = epochs
 		self.batch_size = batch_size
 		self.warmup_portion = warmup_portion
-		if lambda_anneal:
-			assert lambda_init > 0 and lambda_norm > 0
 		self.lambda_anneal = lambda_anneal
 		self.lambda_init = lambda_init
 		self.lambda_norm = lambda_norm
@@ -223,13 +227,13 @@ class ConfigTrain(_BaseConfig):
 		self.scheduler_type = scheduler_type
 		self._set_scheduler_kws(scheduler_kws)
 		self.spectral_reg = spectral_reg
-		self.clip_grad = clip_grad
+		self.grad_clip = grad_clip
 		self.chkpt_freq = chkpt_freq
 		self.eval_freq = eval_freq
 		self.log_freq = log_freq
 
 	def name(self):
-		return '_'.join([
+		name = [
 			'-'.join([
 				f"ep{self.epochs}",
 				f"b{self.batch_size}",
@@ -240,14 +244,18 @@ class ConfigTrain(_BaseConfig):
 					f"anneal({self.kl_anneal_cycles}",
 					f"{self.kl_anneal_portion:0.1f})",
 				]),
-			]),
-			f"lambda({self.lambda_norm:0.2g})",
-		])
+			])
+		]
+		if self.lambda_norm > 0:
+			name.append(f"lambda({self.lambda_norm:0.2g})")
+		if self.grad_clip is not None:
+			name.append(f"grad({self.grad_clip})")
+		return '_'.join(name)
 
 	def _set_optim_kws(self, kws):
 		defaults = {
 			'betas': (0.9, 0.999),
-			'weight_decay': 3e-4,
+			'weight_decay': 1e-4,
 			'eps': 1e-8,
 		}
 		kws = setup_kwargs(defaults, kws)
@@ -268,7 +276,7 @@ class ConfigTrain(_BaseConfig):
 		elif self.scheduler_type == 'exponential':
 			defaults = {
 				'gamma': 0.9,
-				'eta_min': 1e-4,
+				'eta_min': lr_min,
 			}
 		elif self.scheduler_type == 'step':
 			defaults = {

@@ -1,3 +1,5 @@
+import torch.optim
+
 from figures.fighelper import *
 from .dataset import ROFL
 from analysis.regression import regress
@@ -128,18 +130,19 @@ class _BaseTrainer(object):
 	def setup_optim(self):
 		# optimzer
 		params = self.model.parameters()
-		if self.cfg.optimizer == 'adamw':
-			self.optim = torch.optim.AdamW(
-				params=params,
-				lr=self.cfg.lr,
-				**self.cfg.optimizer_kws,
-			)
-		elif self.cfg.optimizer == 'adamax':
-			self.optim = torch.optim.Adamax(
-				params=params,
-				lr=self.cfg.lr,
-				**self.cfg.optimizer_kws,
-			)
+		kws = dict(
+			params=params,
+			lr=self.cfg.lr,
+			**self.cfg.optimizer_kws,
+		)
+		if self.cfg.optimizer == 'adamax':
+			self.optim = torch.optim.Adamax(**kws)
+		elif self.cfg.optimizer == 'adam':
+			self.optim = torch.optim.Adam(**kws)
+		elif self.cfg.optimizer == 'adamw':
+			self.optim = torch.optim.AdamW(**kws)
+		elif self.cfg.optimizer == 'radam':
+			self.optim = torch.optim.RAdam(**kws)
 		else:
 			raise NotImplementedError(self.cfg.optimizer)
 
@@ -222,13 +225,17 @@ class TrainerVAE(_BaseTrainer):
 			beta_cte = int(np.round(self.cfg.kl_const_portion * self.n_iters))
 			beta_cte = np.ones(beta_cte) * self.cfg.kl_beta_min
 			self.betas = np.insert(betas, 0, beta_cte)[:self.n_iters]
-		self.wd_coeffs = beta_anneal_linear(
-			n_iters=self.n_iters,
-			beta=self.cfg.lambda_norm,
-			anneal_portion=self.cfg.kl_anneal_portion,
-			constant_portion=self.cfg.kl_const_portion,
-			min_beta=self.cfg.lambda_init,
-		)
+		if self.cfg.lambda_anneal:
+			self.wd_coeffs = beta_anneal_linear(
+				n_iters=self.n_iters,
+				beta=self.cfg.lambda_norm,
+				anneal_portion=self.cfg.kl_anneal_portion,
+				constant_portion=self.cfg.kl_const_portion,
+				min_beta=self.cfg.lambda_init,
+			)
+		else:
+			self.wd_coeffs = np.ones(self.n_iters)
+			self.wd_coeffs *= self.cfg.lambda_norm
 
 	def iteration(self, epoch: int = 0, **kwargs):
 		self.model.train()
@@ -240,8 +247,10 @@ class TrainerVAE(_BaseTrainer):
 				for pg in self.optim.param_groups:
 					pg['lr'] = lr
 			self.optim.zero_grad()
+			# send to device
+			if x.device != self.device:
+				x, norm = self.to([x, norm])
 			# forward
-			x, norm = self.to([x, norm])
 			y, _, q, p = self.model(x)
 			# loss
 			l1, l2, epe, cos = self.model.loss_recon(
@@ -257,17 +266,11 @@ class TrainerVAE(_BaseTrainer):
 			)
 			nelbo_batch = loss_recon + balanced_kl
 			loss = torch.mean(nelbo_batch)
-			if _check_nans(loss, gstep):
-				continue
 			# add regularization
-			if self.cfg.lambda_anneal:
-				wd_coeff = self.wd_coeffs[gstep]
-			else:
-				wd_coeff = self.cfg.lambda_norm
 			cond_reg_weight = self.cfg.lambda_norm > 0
 			if cond_reg_weight:
 				loss_w = self.model.loss_weight()
-				loss += wd_coeff * loss_w
+				loss += self.wd_coeffs[gstep] * loss_w
 			else:
 				loss_w = None
 			cond_reg_spectral = self.cfg.lambda_norm > 0 \
@@ -276,22 +279,25 @@ class TrainerVAE(_BaseTrainer):
 			if cond_reg_spectral:
 				loss_sr = self.model.loss_spectral(
 					device=self.device, name='w')
-				loss += wd_coeff * loss_sr
+				loss += self.wd_coeffs[gstep] * loss_sr
 			else:
 				loss_sr = None
 			# backward
 			loss.backward()
-			grads = [
-				torch.linalg.norm(p.grad).item()
-				for p in self.model.parameters()
-			]
-			if self.cfg.clip_grad is not None:
+			nelbo.update(loss.item(), 1)
+			if self.cfg.grad_clip is not None:
 				grad_norm = nn.utils.clip_grad_norm_(
 					parameters=self.model.parameters(),
-					max_norm=self.cfg.clip_grad,
+					max_norm=self.cfg.grad_clip,
 				).item()
 			else:
 				grad_norm = None
+			self.writer.add_scalar('grads/loss_before_skip', loss, gstep)
+			self.writer.add_scalar('grads/norm_before_skip', grad_norm, gstep)
+			# if not _check_nans(loss, gstep):
+			# if grad_norm > 1e4:
+			# print(f'gstep={gstep}, grad norm = {grad_norm} . . . skipped')
+			# continue
 			self.optim.step()
 			cond_schedule = (
 				gstep > kwargs['n_iters_warmup']
@@ -299,18 +305,17 @@ class TrainerVAE(_BaseTrainer):
 			)
 			if cond_schedule:
 				self.optim_schedule.step()
-			nelbo.update(loss.item(), 1)
-
-			cond = (
+			# write
+			cond_write = (
 				self.writer is not None and
 				gstep % self.cfg.log_freq == 0
 				and gstep > 0
 			)
-			if not cond:
+			if not cond_write:
 				continue
 			to_write = {
 				'train/beta': self.betas[gstep],
-				'train/reg_coeff': wd_coeff,
+				'train/reg_coeff': self.wd_coeffs[gstep],
 				'train/lr': self.optim.param_groups[0]['lr'],
 				'train/loss_kl': torch.mean(sum(kl_all)).item(),
 				'train/loss_recon': torch.mean(loss_recon).item(),
@@ -335,6 +340,10 @@ class TrainerVAE(_BaseTrainer):
 			to_write['kl/total_active'] = total_active
 			ratio = total_active / self.model.cfg.total_latents()
 			to_write['kl/total_active_ratio'] = ratio
+			grads = [
+				torch.linalg.norm(p.grad).item()
+				for p in self.model.parameters()
+			]
 			to_write['grads/median'] = np.median(grads)
 			to_write['grads/mean'] = np.mean(grads)
 			to_write['grads/max'] = np.max(grads)
@@ -354,7 +363,7 @@ class TrainerVAE(_BaseTrainer):
 		# sample? plot?
 		if gstep is not None:
 			i = int(gstep / len(self.dl_trn))
-			cond = i % (self.cfg.eval_freq * 9) == 0
+			cond = i % (self.cfg.eval_freq * 5) == 0
 		else:
 			cond = True
 		cond = cond and n_samples is not None
@@ -368,12 +377,16 @@ class TrainerVAE(_BaseTrainer):
 				**figs,
 			}
 		else:
-			figs = None
+			regr, figs = None, None
 		# write
 		if gstep is not None:
 			for k, v in loss.items():
 				self.writer.add_scalar(f"eval/{k}", v.mean(), gstep)
 			if cond:
+				r = np.diag(regr['regr/r']).mean()
+				mi = np.max(regr['regr/mi'], axis=0).mean()
+				self.writer.add_scalar(f"eval/r", r, gstep)
+				self.writer.add_scalar(f"eval/mi", mi, gstep)
 				for k, v in figs.items():
 					self.writer.add_figure(k, v, gstep)
 		return data, loss
@@ -519,14 +532,15 @@ class TrainerVAE(_BaseTrainer):
 			r=regr['regr/mi'],
 			yticklabels=_ty,
 			title=f"{self.model.cfg.name()}",
-			tick_labelsize_y=10,
-			title_fontsize=20,
+			tick_labelsize_y=7,
+			title_fontsize=15,
+			title_y=1.02,
 			vmin=0,
 			vmax=0.65,
 			cmap='rocket',
 			linecolor='dimgrey',
-			cbar_kws={'pad': 0.02},
-			figsize=(18, 2.5),
+			cbar_kws={'pad': 0.001, 'shrink': 0.8},
+			figsize=(20, 2.5),
 			annot=False,
 			display=False,
 		)
@@ -591,3 +605,5 @@ def _check_nans(loss, gstep: int):
 		msg += f"global step = {gstep}"
 		print(msg)
 		return True
+	else:
+		return False

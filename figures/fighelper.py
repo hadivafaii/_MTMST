@@ -11,9 +11,10 @@ def show_heatmap(
 		**kwargs, ):
 	defaults = dict(
 		figsize=(15, 12),
-		title_fontsize=13,
 		tick_labelsize_x=14,
 		tick_labelsize_y=14,
+		title_fontsize=13,
+		title_y=1,
 		vmin=-1,
 		vmax=1,
 		cmap='bwr',
@@ -28,7 +29,11 @@ def show_heatmap(
 	fig, ax = create_figure(figsize=kwargs['figsize'])
 	sns.heatmap(r, ax=ax, **filter_kwargs(sns.heatmap, kwargs))
 	if title is not None:
-		ax.set_title(title, fontsize=kwargs['title_fontsize'])
+		ax.set_title(
+			label=title,
+			y=kwargs['title_y'],
+			fontsize=kwargs['title_fontsize'],
+		)
 	if xticklabels is not None:
 		ax.set_xticklabels(xticklabels)
 		ax.tick_params(
@@ -237,9 +242,12 @@ def show_opticflow(
 	defaults = {
 		'figsize': (9, 9),
 		'tick_spacing': 3,
+		'scale': None,
 	}
 	kwargs = setup_kwargs(defaults, kwargs)
 	x = to_np(x)
+	if x.shape[-1] == 2:
+		x = np.transpose(x, (0, -1, 1, 2))
 	d, odd = x.shape[2] // 2, x.shape[2] % 2
 	span = range(-d, d + 1) if odd else range(-d, d)
 	ticks, ticklabels = make_ticks(
@@ -259,7 +267,10 @@ def show_opticflow(
 		except IndexError:
 			ax.remove()
 			continue
-		ax.quiver(span, span, v[0], v[1])
+		ax.quiver(
+			span, span, v[0], v[1],
+			scale=kwargs['scale'],
+		)
 		ax.set(
 			xticks=ticks,
 			yticks=ticks,
@@ -281,6 +292,7 @@ def show_opticflow_full(v: np.ndarray, **kwargs):
 		'cmap_rho': 'Spectral_r',
 		'figsize': (10, 9),
 		'tick_spacing': 3,
+		'scale': None,
 	}
 	kwargs = setup_kwargs(defaults, kwargs)
 	v = to_np(v)
@@ -333,7 +345,10 @@ def show_opticflow_full(v: np.ndarray, **kwargs):
 	axes.append(ax4)
 
 	ax = fig.add_subplot(gs[1:, :])
-	ax.quiver(span, span, v[0], v[1])
+	ax.quiver(
+		span, span, v[0], v[1],
+		scale=kwargs['scale'],
+	)
 	ax.set(
 		xticks=ticks,
 		yticks=ticks,

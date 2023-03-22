@@ -2,12 +2,10 @@ from .utils_model import *
 
 
 _CHOICES = ['obj', 'transl', 'fixate', 'pursuit']
-
-
 _Obj = collections.namedtuple(
 	typename='Object',
 	field_names=[
-		'pos', 'v',      # coordinate system: real
+		'pos', 'v',	   # coordinate system: real
 		'alpha', 'r',  # coordinate system: self
 		'size'],
 )
@@ -21,9 +19,9 @@ class OpticFlow(object):
 			n_obj: int = 1,
 			fov: float = 45,
 			res: float = 1.0,
-			obj_r: float = 0.3,
+			obj_r: float = 0.2,
 			obj_bound: float = 0.97,
-			obj_zlim: Tuple[float, float] = (0.324, 1),
+			obj_zlim: Tuple[float, float] = (0.5, 1),
 			vlim_slf: Tuple[float, float] = (0.01, 1.0),
 			vlim_obj: Tuple[float, float] = (0.01, 2.0),
 			z_bg: float = 1.0,
@@ -60,12 +58,37 @@ class OpticFlow(object):
 			self.v_slf = np.zeros((self.num, 3))
 		else:
 			self.v_slf = self.sample_vel(*self.vlim_slf)
-		v_tr, x_obj = self._add_objects()
-		v_tr -= self._prepare_v(self.v_slf)
-		v_rot = self._compute_v_rot(x_obj)
+		v_tr, x_env = self.add_objects()
+		v_tr -= self._prepvslf(self.v_slf)
+		v_rot = self._compute_v_rot(x_env)
 		self.alpha_dot = compute_alpha_dot(
-			v=v_tr - v_rot, x=x_obj, axis=3)
-		return x_obj, v_tr, v_rot
+			v=v_tr - v_rot, x=x_env, axis=3)
+		return x_env, v_tr, v_rot
+
+	def add_objects(self):
+		# pos:		real coordinate system (meters)
+		# alpha:	self coordinate system (radians)
+		if self.n_obj == 0:
+			return 0, self.x
+		obj_masks = {}
+		for obj_i in range(self.n_obj):
+			if self.category == 'pursuit' and obj_i == 0:
+				pos = _replace_z(self.fix, self.sample_z())
+				alpha = np.zeros((self.num, 2))
+			else:
+				pos, alpha = self.sample_pos()
+			mask = self.compute_obj_mask(pos)
+			kws = dict(
+				pos=pos,
+				alpha=alpha,
+				size=mask.mean(-1).mean(-1),
+				v=self.sample_vel(*self.vlim_obj),
+				r=cart2polar(self.apply_rot(pos, True)),
+			)
+			self.objects[obj_i] = _Obj(**kws)
+			obj_masks[obj_i] = mask
+		x_env, v_tr = self._compute_obj_v(obj_masks)
+		return v_tr, x_env
 
 	def compute_coords(self, fix: np.ndarray = None):
 		if fix is None:
@@ -74,6 +97,13 @@ class OpticFlow(object):
 		self._compute_rot()
 		self._compute_xyz()
 		return self
+
+	def sample_z(self):
+		return self.rng.uniform(
+			low=self.obj_zlim[0],
+			high=self.obj_zlim[1],
+			size=self.num,
+		)
 
 	def sample_vel(self, vmin: float, vmax: float):
 		v = self.rng.normal(size=(self.num, 3))
@@ -85,39 +115,27 @@ class OpticFlow(object):
 		)
 		return v
 
-	def sample_pos(self, flat_criterion: bool = True):
+	def sample_pos(self):
 		bound = self.obj_bound * self.fov
-		if flat_criterion:
-			bound = np.tan(np.deg2rad(bound))
-		pos = np_nans((self.num, 3))
-		for i in range(self.num):
-			while True:
-				u = self.rng.normal(size=3)
-				if flat_criterion:
-					_, th, ph = cart2polar(
-						self.R[i].T @ u).ravel()
-					a = np.tan(th) * np.cos(ph)
-					b = np.tan(th) * np.sin(ph)
-					cond = (
-						np.abs(a) < bound and
-						np.abs(b) < bound
-					)
-				else:
-					c = sp_dist.cosine(self.fix[i], u)
-					c = np.rad2deg(np.arccos(1 - c))
-					cond = c < bound
-				if cond:
-					break
-			_, th, ph = cart2polar(u).ravel()
-			z = self.rng.uniform(
-				low=self.obj_zlim[0],
-				high=self.obj_zlim[1],
-			)
-			pos[i] = polar2cart(np.array(
-				[z / np.cos(th), th, ph]
-			)).ravel()
-		assert not np.isnan(pos).sum()
-		return pos
+		bound = np.deg2rad(bound)
+		alpha = self.span[np.logical_and(
+			-bound < self.span,
+			self.span < bound,
+		)]
+		alpha = self.rng.choice(
+			a=alpha,
+			replace=True,
+			size=(self.num, 2),
+		)
+		theta, phi = radself2polar(
+			a=alpha[:, 0],
+			b=alpha[:, 1],
+		)
+		u = [np.ones(self.num), theta, phi]
+		u = polar2cart(np.stack(u, axis=1))
+		u = self.apply_rot(u, transpose=False)
+		pos = _replace_z(u, self.sample_z())
+		return pos, alpha
 
 	def sample_fix(self):
 		fix = np_nans((self.num, 2))
@@ -144,61 +162,24 @@ class OpticFlow(object):
 		)))[:arr.ndim - 2]
 		operands = 'aij, '
 		operands += ' -> '.join([
-			'a' + etc + 'i' if transpose else 'j',
-			'a' + etc + 'j' if transpose else 'i',
+			'a' + etc + ('i' if transpose else 'j'),
+			'a' + etc + ('j' if transpose else 'i'),
 		])
 		return np.einsum(operands, self.R, arr)
 
 	def compute_obj_mask(self, pos: np.ndarray):
-		mask = self.x_bg - pos.reshape((self.num, 1, 1, 3))
-		mask = sp_lin.norm(mask[..., :2], axis=-1) < self.obj_r
-		return mask
-
-	def _add_objects(self):
-		# pos:        real coordinate system
-		# pos_self:   self coordinate system
-		if self.n_obj == 0:
-			return 0, self.x
-		obj_masks = {}
-		for obj_i in range(1, self.n_obj + 1):
-			if self.category == 'pursuit' and obj_i == 1:
-				pos = self.fix.copy()
-				pos[:, 2] = self.rng.uniform(
-					low=self.obj_zlim[0],
-					high=self.obj_zlim[1],
-				)
-			else:
-				pos = self.sample_pos(flat_criterion=True)
-			pos_self = self.apply_rot(pos, transpose=True)
-			mask = self.compute_obj_mask(pos)
-			kws = dict(
-				pos=pos,
-				v=self.sample_vel(*self.vlim_obj),
-				alpha=np.stack([
-					np.arctan2(pos_self[:, 0], pos_self[:, 2]),
-					np.arctan2(pos_self[:, 1], pos_self[:, 2]),
-				], axis=1),
-				r=cart2polar(pos_self),
-				size=mask.mean(-1).mean(-1),
-			)
-			self.objects[obj_i] = _Obj(**kws)
-			obj_masks[obj_i] = mask
-		x_obj, v_tr = self._compute_obj_v(obj_masks)
-		return v_tr, x_obj
-
-	def _compute_v_rot(self, x: np.ndarray):
-		if self.category in ['obj', 'transl']:
-			return 0
-		if self.category == 'fixate':
-			v = -self.v_slf
-		elif self.category == 'pursuit':
-			v = self.objects[1].v - self.v_slf
-		v_rot = None  # TODO: fix this
-		return v_rot
+		mask = np.zeros((self.num, self.dim, self.dim))
+		for i in range(self.num):
+			u = flatten_arr(self.gamma[i])
+			u = _replace_z(u, pos[i, 2])
+			d = (pos[i] - u)[:, :2]
+			m = sp_lin.norm(d, axis=1) < self.obj_r
+			mask[i] = m.reshape((self.dim, self.dim))
+		return mask.astype(bool)
 
 	def _compute_obj_v(self, obj_masks: dict):
-		x_obj = self.x_bg.copy()
-		v_tr = np.zeros((self.num, self.dim, self.dim, 3))
+		x_env = self.apply_rot(self.x, transpose=False)
+		v_tr = np.zeros_like(x_env)
 		for i in range(self.num):
 			obj_z = {
 				obj_i: obj.pos[i, 2] for
@@ -211,15 +192,36 @@ class OpticFlow(object):
 			))
 			for obj_i, z in zip(order, obj_z):
 				m = obj_masks[obj_i][i]
-				x_obj[i, ..., -1][m] = z
+				x_env[i, ..., -1][m] = z
 				for j in range(3):
 					v = self.objects[obj_i].v[i, j]
 					v_tr[i, ..., j][m] = v
-		x_obj = self.apply_rot(x_obj, transpose=True)
+		x_env = self.apply_rot(x_env, transpose=True)
 		v_tr = self.apply_rot(v_tr, transpose=True)
-		return x_obj, v_tr
+		return x_env, v_tr
 
-	def _prepare_v(self, v: np.ndarray):
+	def _compute_v_rot(self, x: np.ndarray):
+		if self.category in ['obj', 'transl']:
+			return 0
+		if self.category == 'fixate':
+			omega = compute_omega(
+				gaze=self.fix,
+				v=-self.v_slf,
+			)
+		elif self.category == 'pursuit':
+			omega = compute_omega(
+				gaze=self.objects[0].pos,
+				v=self.objects[0].v - self.v_slf,
+			)
+		else:
+			raise RuntimeError(self.category)
+		mat = 'ami, amn, anj -> aij'
+		mat = np.einsum(mat, self.R, skew(omega, 1), self.R)
+		v_rot = 'aij, axyj -> axyi'
+		v_rot = np.einsum(v_rot, mat, x)
+		return v_rot
+
+	def _prepvslf(self, v: np.ndarray):
 		v_transl = self.apply_rot(v, transpose=True)
 		v_transl = _expand(v_transl, self.dim, 1)
 		v_transl = _expand(v_transl, self.dim, 1)
@@ -239,19 +241,28 @@ class OpticFlow(object):
 		return
 
 	def _compute_xyz(self):
-		gamma = 'aij, mnj -> amni'
-		gamma = np.einsum(gamma, self.R, self.tan)
+		"""
+		# x: 		measured in self coordinate system
+		# x_bg:		measured in real coordinate system
+		# gamma:	points in real space corresponding
+		# 			to each retinal grid point with a
+		#			self z of 1
+		"""
+		gamma = 'aij, xyj -> axyi'
+		self.gamma = np.einsum(
+			gamma, self.R, self.tan)
 		shape = (1, self.dim, self.dim, 1)
-		# x: measured in self coordinate system:
 		self.x = self.z_bg * np.concatenate([
 			self.tan[..., 0].reshape(shape),
 			self.tan[..., 1].reshape(shape),
 			np.ones(shape),
-		], axis=-1) / gamma[..., [-1]]
-		# x_bg: measured in real coordinate system:
-		x_bg = 'aij, amnj -> amni'
-		self.x_bg = np.einsum(x_bg, self.R, self.x)
-		assert np.all(np.round(self.x_bg[..., -1], 10) == self.z_bg)
+		], axis=-1) / self.gamma[..., [-1]]
+		# test correctness:
+		x_bg = self.apply_rot(
+			self.x, transpose=False)
+		assert np.all(np.round(
+			x_bg[..., -1], decimals=7,
+		) == self.z_bg), "wall is flat"
 		return
 
 	def _compute_rot(self):
@@ -276,6 +287,10 @@ class OpticFlow(object):
 			np.tan(self.alpha),
 			np.ones((self.dim,) * 2 + (1,)),
 		], axis=-1)
+		self.theta, self.phi = radself2polar(
+			a=self.alpha[..., 0],
+			b=self.alpha[..., 1],
+		)
 		return
 
 	def _init_span(self):
@@ -1085,6 +1100,10 @@ def compute_alpha_dot(
 		v: np.ndarray,
 		x: np.ndarray,
 		axis: int = 3, ):
+	"""
+	# both x and v are measured
+	# in self coordinate system
+	"""
 	delta = v.ndim - x.ndim
 	if delta > 0:
 		for n in v.shape[-delta:]:
@@ -1105,7 +1124,22 @@ def compute_alpha_dot(
 	return alpha_dot
 
 
-def vself2polar(
+def compute_omega(gaze: np.ndarray, v: np.ndarray):
+	# gaze = self.fix when category == 'fixate'
+	# gaze = obj pos when category == 'pursuit'
+	norm = sp_lin.norm(gaze, axis=-1)
+	coeff = 'ai, ai -> a'
+	coeff = np.einsum(coeff, v, gaze)
+	coeff /= norm ** 2
+	coeff = coeff.reshape(-1, 1)
+	v_normal = v - coeff * gaze
+	omega = 'aij, aj -> ai'
+	omega = np.einsum(omega, skew(gaze, 1), v_normal)
+	omega /= np.expand_dims(norm ** 2, axis=-1)
+	return omega
+
+
+def radself2polar(
 		a: np.ndarray,
 		b: np.ndarray,
 		dtype=float, ):
@@ -1116,6 +1150,15 @@ def vself2polar(
 	phi = np.arctan2(tb, ta, dtype=dtype)
 	phi[phi < 0] += 2 * np.pi
 	return theta, phi
+
+
+def _replace_z(u: np.ndarray, z: np.ndarray):
+	u = cart2polar(u)
+	th, ph = u[:, 1], u[:, 2]
+	pos = [z / np.cos(th), th, ph]
+	pos = np.stack(pos, axis=1)
+	pos = polar2cart(pos)
+	return pos
 
 
 def _expand(arr, reps, axis):

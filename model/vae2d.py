@@ -16,8 +16,7 @@ class VAE(Module):
 			s = cell(s)
 
 		# run the main encoder tower
-		comb_enc = []
-		comb_s = []
+		comb_enc, comb_s = [], []
 		for cell in self.enc_tower:
 			if isinstance(cell, CombinerEnc):
 				comb_enc.append(cell)
@@ -63,7 +62,7 @@ class VAE(Module):
 					if self.cfg.residual_kl:
 						dist = Normal(
 							mu=mu_q + mu_p,
-							logsigma=logsig_q,
+							logsigma=logsig_q + logsig_p,
 						)
 					else:
 						dist = Normal(mu_q, logsig_q)
@@ -232,8 +231,8 @@ class VAE(Module):
 
 	def _init(self):
 		self.vanilla = (
-				self.cfg.n_latent_scales == 1 and
-				self.cfg.n_groups_per_scale == 1
+			self.cfg.n_latent_scales == 1 and
+			self.cfg.n_groups_per_scale == 1
 		)
 		self.kws = dict(
 			act_fn=self.cfg.activation_fn,
@@ -242,15 +241,14 @@ class VAE(Module):
 		)
 		self._init_stem()
 		self._init_sizes()
-		mult = self._init_pre(1)
+		mult, depth = self._init_pre(1, 1)
 		if not self.vanilla:
-			mult = self._init_enc(mult)
+			mult = self._init_enc(mult, depth)
 		else:
 			self.enc_tower = []
-		# mult = self._init_enc0(mult)
 		self._init_sampler(mult)
 		if not self.vanilla:
-			mult = self._init_dec(mult)
+			mult, depth = self._init_dec(mult, 1)
 			self.stem_decoder = None
 		else:
 			self.dec_tower = []
@@ -262,7 +260,7 @@ class VAE(Module):
 					out_channels=int(mult * self.n_ch),
 					kernel_size=1,
 				)
-		mult = self._init_post(mult)
+		mult = self._init_post(mult, depth)
 		self._init_output(mult)
 		self._init_norm()
 		self._init_loss()
@@ -303,15 +301,9 @@ class VAE(Module):
 				kernel_size=self.cfg.ker_sz,
 				padding='valid',
 			)
-			# self.stem = nn.Conv2d(
-			# 	in_channels=2,
-			# 	out_channels=self.cfg.n_kers * self.cfg.n_rots,
-			# 	kernel_size=self.cfg.ker_sz,
-			# 	padding='valid',
-			# )
 		return
 
-	def _init_pre(self, mult):
+	def _init_pre(self, mult, depth):
 		pre = nn.ModuleList()
 		looper = itertools.product(
 			range(self.cfg.n_pre_blocks),
@@ -324,7 +316,9 @@ class VAE(Module):
 				cell = Cell(
 					ci=ch,
 					co=co,
-					n_nodes=2,
+					n_nodes=self.cfg.n_enc_nodes,
+					init_scale=1/np.sqrt(depth) if
+					self.cfg.scale_init else None,
 					cell_type='down_pre',
 					**self.kws,
 				)
@@ -333,15 +327,18 @@ class VAE(Module):
 				cell = Cell(
 					ci=ch,
 					co=ch,
-					n_nodes=2,
+					n_nodes=self.cfg.n_enc_nodes,
+					init_scale=1/np.sqrt(depth) if
+					self.cfg.scale_init else None,
 					cell_type='normal_pre',
 					**self.kws,
 				)
 			pre.append(cell)
+			depth += 1
 		self.pre = pre
-		return mult
+		return mult, depth
 
-	def _init_enc(self, mult):
+	def _init_enc(self, mult, depth):
 		enc = nn.ModuleList()
 		for s in range(self.cfg.n_latent_scales):
 			ch = int(self.n_ch * mult)
@@ -350,14 +347,17 @@ class VAE(Module):
 					enc.append(Cell(
 						ci=ch,
 						co=ch,
-						n_nodes=2,
+						n_nodes=self.cfg.n_enc_nodes,
+						init_scale=1/np.sqrt(depth) if
+						self.cfg.scale_init else None,
 						cell_type='normal_pre',
 						**self.kws,
 					))
+					depth += 1
 				# add encoder combiner
 				combiner = not (
-						g == self.cfg.groups[s] - 1 and
-						s == self.cfg.n_latent_scales - 1
+					g == self.cfg.groups[s] - 1 and
+					s == self.cfg.n_latent_scales - 1
 				)
 				if combiner:
 					enc.append(CombinerEnc(ch, ch))
@@ -367,12 +367,15 @@ class VAE(Module):
 				cell = Cell(
 					ci=ch,
 					co=ch * MULT,
-					n_nodes=2,
+					n_nodes=self.cfg.n_enc_nodes,
+					init_scale=1/np.sqrt(depth) if
+					self.cfg.scale_init else None,
 					cell_type='down_enc',
 					**self.kws,
 				)
 				enc.append(cell)
 				mult *= MULT
+				depth += 1
 		self.enc_tower = enc
 		return mult
 
@@ -418,7 +421,7 @@ class VAE(Module):
 		self.expand = expand
 		return
 
-	def _init_dec(self, mult):
+	def _init_dec(self, mult, depth):
 		dec = nn.ModuleList()
 		for s in range(self.cfg.n_latent_scales):
 			ch = int(self.n_ch * mult)
@@ -428,10 +431,13 @@ class VAE(Module):
 						dec.append(Cell(
 							ci=ch,
 							co=ch,
-							n_nodes=1,
+							n_nodes=self.cfg.n_dec_nodes,
+							init_scale=1/np.sqrt(depth) if
+							self.cfg.scale_init else None,
 							cell_type='normal_dec',
 							**self.kws,
 						))
+						depth += 1
 				dec.append(CombinerDec(
 					ci1=ch,
 					ci2=self.cfg.n_latent_per_group,
@@ -442,20 +448,23 @@ class VAE(Module):
 				dec.append(Cell(
 					ci=ch,
 					co=int(ch / MULT),
-					n_nodes=1,
+					n_nodes=self.cfg.n_dec_nodes,
+					init_scale=1/np.sqrt(depth) if
+					self.cfg.scale_init else None,
 					cell_type='up_dec',
 					**self.kws,
 				))
 				mult /= MULT
+				depth += 1
 		self.dec_tower = dec
-		return mult
+		return mult, depth
 
-	def _init_post(self, mult):
+	def _init_post(self, mult, depth):
 		post = nn.ModuleList()
 		upsample = nn.Upsample(
-				size=self.cfg.input_sz,
-				mode='nearest',
-			)
+			size=self.cfg.input_sz,
+			mode='nearest',
+		)
 		looper = itertools.product(
 			range(self.cfg.n_post_blocks),
 			range(self.cfg.n_post_cells),
@@ -467,7 +476,9 @@ class VAE(Module):
 				cell = Cell(
 					ci=ch,
 					co=co,
-					n_nodes=1,
+					n_nodes=self.cfg.n_dec_nodes,
+					init_scale=1/np.sqrt(depth) if
+					self.cfg.scale_init else None,
 					cell_type='up_post',
 					**self.kws,
 				)
@@ -476,11 +487,14 @@ class VAE(Module):
 				cell = Cell(
 					ci=ch,
 					co=ch,
-					n_nodes=1,
+					n_nodes=self.cfg.n_dec_nodes,
+					init_scale=1/np.sqrt(depth) if
+					self.cfg.scale_init else None,
 					cell_type='normal_post',
 					**self.kws,
 				)
 			post.append(cell)
+			depth += 1
 			if c == 0 and b + 1 == self.cfg.n_post_blocks:
 				post.append(upsample)
 		if not len(post):
@@ -513,7 +527,7 @@ class VAE(Module):
 			fn = AddNorm(
 				norm='spectral',
 				types=(nn.Conv2d, nn.ConvTranspose2d),
-				n_power_iterations=self.cfg.n_power_iter,
+				n_power_iterations=self.cfg.spectral_norm,
 				name='weight',
 			).get_fn()
 			self.apply(fn)

@@ -165,6 +165,7 @@ class Cell(nn.Module):
 			act_fn: str,
 			use_bn: bool,
 			use_se: bool,
+			init_scale: float,
 			**kwargs,
 	):
 		super(Cell, self).__init__()
@@ -179,6 +180,9 @@ class Cell(nn.Module):
 				if i == 0 else 1,
 				act_fn=act_fn,
 				use_bn=use_bn,
+				init_scale=init_scale
+				if i+1 == n_nodes
+				else None,
 				**kwargs,
 			)
 			self.ops.append(op)
@@ -212,6 +216,7 @@ class ConvLayer(nn.Module):
 			'out_channels': co,
 			'kernel_size': 3,
 			'normalize_dim': 0,
+			'init_scale': None,
 			'stride': abs(stride),
 			'padding': 1,
 			'dilation': 1,
@@ -345,15 +350,14 @@ class Conv2D(nn.Conv2d):
 			**kwargs,
 		)
 		self.dims, self.shape = _dims(normalize_dim, 4)
+		self.init_scale = init_scale
 		init = torch.linalg.vector_norm(
 			x=self.weight, dim=self.dims)
-		# TODO: new start
 		init += init_center - torch.mean(init)
 		if init_scale is not None:
 			init *= init_scale
 		self.log_weight_norm = nn.Parameter(
 			torch.log(init), requires_grad=True)
-		# TODO: new end
 		self.w = self.normalize_weight()
 
 	def forward(self, x):
