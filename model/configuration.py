@@ -186,23 +186,24 @@ class ConfigTrain(_BaseConfig):
 			lr: float = 0.01,
 			epochs: int = 1000,
 			batch_size: int = 128,
-			warmup_portion: float = 0.03,
+			warmup_portion: float = 0.01,
 			optimizer: str = 'adamax',
 			optimizer_kws: dict = None,
 			lambda_anneal: bool = True,
 			lambda_norm: float = 1e-5,
-			lambda_init: float = 0.0,
+			lambda_init: float = 1e-9,
 			kl_beta: float = 1.0,
 			kl_beta_min: float = 1e-4,
 			kl_anneal_cycles: int = 0,
 			kl_anneal_portion: float = 0.3,
 			kl_const_portion: float = 1e-2,
+			kl_balancer: str = 'equal',
 			scheduler_type: str = 'cosine',
 			scheduler_kws: dict = None,
 			spectral_reg: bool = False,
 			grad_clip: float = None,
 			chkpt_freq: int = 50,
-			eval_freq: int = 10,
+			eval_freq: int = 5,
 			log_freq: int = 30,
 	):
 		super(ConfigTrain, self).__init__(full=False)
@@ -215,6 +216,7 @@ class ConfigTrain(_BaseConfig):
 		self.lambda_norm = lambda_norm
 		self.kl_beta = kl_beta
 		self.kl_beta_min = kl_beta_min
+		self.kl_balancer = kl_balancer
 		self.kl_anneal_cycles = kl_anneal_cycles
 		self.kl_anneal_portion = kl_anneal_portion
 		self.kl_const_portion = kl_const_portion
@@ -250,6 +252,8 @@ class ConfigTrain(_BaseConfig):
 			name.append(f"lambda({self.lambda_norm:0.2g})")
 		if self.grad_clip is not None:
 			name.append(f"grad({self.grad_clip})")
+		if self.kl_balancer is not None:
+			name.append(f"bal-{self.kl_balancer}")
 		return '_'.join(name)
 
 	def _set_optim_kws(self, kws):

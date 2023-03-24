@@ -74,30 +74,27 @@ def kl_per_group(kl_all) -> (torch.Tensor,) * 2:
 	return kl_coeff_i, kl_vals
 
 
-def kl_balancer_coeff(
-		groups: List[int],
-		fun: str,
-		device: torch.device = None, ):
+def kl_balancer_coeff(groups: List[int], fun: str):
 	n = len(groups)
 	if fun == 'equal':
 		coeff = torch.cat([
 			torch.ones(groups[n-i-1])
 			for i in range(n)
-		], dim=0).to(device)
+		], dim=0)
 	elif fun == 'linear':
 		coeff = torch.cat([
 			(2 ** i) * torch.ones(groups[n-i-1])
 			for i in range(n)
-		], dim=0).to(device)
+		], dim=0)
 	elif fun == 'sqrt':
 		coeff = torch.cat([
 			np.sqrt(2 ** i) * torch.ones(groups[n-i-1])
 			for i in range(n)
-		], dim=0).to(device)
+		], dim=0)
 	elif fun == 'square':
 		coeff = torch.cat([
 			np.square(2 ** i) / groups[n-i-1] * torch.ones(groups[n-i-1])
-			for i in range(n)], dim=0).to(device)
+			for i in range(n)], dim=0)
 	else:
 		raise NotImplementedError(fun)
 	# convert min to 1.

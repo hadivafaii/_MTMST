@@ -23,7 +23,6 @@ class Normal:
 
 	def sample(self):
 		return sample_normal(self.mu, self.sigma, self.rng)
-		# return sample_normal_jit(self.mu, self.sigma)
 
 	def log_p(self, samples: torch.Tensor):
 		zscored = (samples - self.mu) / self.sigma
@@ -44,18 +43,27 @@ class Normal:
 		return kl
 
 
-def soft_clamp(x: torch.Tensor, c: float = 5.0):
+def soft_clamp(x: torch.Tensor, c: float = 10.0):
 	return x.div(c).tanh_().mul(c)
 
 
 def sample_normal(
 		mu: torch.Tensor,
 		sigma: torch.Tensor,
-		generator: torch.Generator = None, ):
-	eps = mu.mul(0).normal_(
-		generator=generator).mul_(sigma)
-	z = eps.add(mu)
-	return z
+		rng: torch.Generator = None, ):
+	eps = torch.empty_like(mu).normal_(
+		mean=0., std=1., generator=rng)
+	return sigma * eps + mu
+
+
+# def sample_normal_old(
+# 		mu: torch.Tensor,
+# 		sigma: torch.Tensor,
+# 		generator: torch.Generator = None, ):
+# 	eps = mu.mul(0).normal_(
+# 		generator=generator).mul_(sigma)
+# 	z = eps.add(mu)
+# 	return z
 
 
 # @torch.jit.script

@@ -237,11 +237,13 @@ def plot_opticflow_hist(
 def show_opticflow(
 		x: np.ndarray,
 		num: int = 4,
+		titles: list = None,
 		display: bool = True,
 		**kwargs, ):
 	defaults = {
 		'figsize': (9, 9),
 		'tick_spacing': 3,
+		'title_fontsize': 15,
 		'scale': None,
 	}
 	kwargs = setup_kwargs(defaults, kwargs)
@@ -267,6 +269,14 @@ def show_opticflow(
 		except IndexError:
 			ax.remove()
 			continue
+		if titles is not None:
+			try:
+				ax.set_title(
+					label=titles[i],
+					fontsize=kwargs['title_fontsize'],
+				)
+			except IndexError:
+				pass
 		ax.quiver(
 			span, span, v[0], v[1],
 			scale=kwargs['scale'],

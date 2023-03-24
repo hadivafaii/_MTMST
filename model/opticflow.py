@@ -1,7 +1,7 @@
 from .utils_model import *
 
 
-_CHOICES = ['obj', 'transl', 'fixate', 'pursuit']
+_CHOICES = ['obj', 'transl', 'terrain', 'fixate', 'pursuit']
 _Obj = collections.namedtuple(
 	typename='Object',
 	field_names=[
@@ -22,10 +22,12 @@ class OpticFlow(object):
 			obj_r: float = 0.2,
 			obj_bound: float = 0.97,
 			obj_zlim: Tuple[float, float] = (0.5, 1),
-			vlim_slf: Tuple[float, float] = (0.01, 1.0),
 			vlim_obj: Tuple[float, float] = (0.01, 2.0),
+			vlim_slf: Tuple[float, float] = (0.01, 1.0),
+			residual: bool = False,
 			z_bg: float = 1.0,
 			seed: int = 0,
+			**kwargs,
 	):
 		super(OpticFlow, self).__init__()
 		assert category in _CHOICES,\
@@ -33,8 +35,12 @@ class OpticFlow(object):
 		assert isinstance(num, int) and num > 0
 		assert isinstance(n_obj, int) and n_obj >= 0
 		assert isinstance(z_bg, float) and z_bg > 0
-		if category in ['obj', 'pursuit']:
+		if category in ['obj', 'terrain', 'pursuit']:
 			assert n_obj > 0
+		if category == 'obj':
+			vlim_slf = (0, 0)
+		if category == 'terrain':
+			vlim_obj = (0, 0)
 		self.category = category
 		self.num = num
 		self.n_obj = n_obj
@@ -44,22 +50,37 @@ class OpticFlow(object):
 		self.obj_r = obj_r
 		self.obj_zlim = obj_zlim
 		self.obj_bound = obj_bound
-		self.vlim_slf = vlim_slf
 		self.vlim_obj = vlim_obj
+		self.vlim_slf = vlim_slf
 		self.rng = get_rng(seed)
+		self.kws = kwargs
 		self._init_span()
 		self._init_polar_coords()
+		self.residual = residual
 		self.alpha_dot = None
+		self.z_env = None
 		self.v_slf = None
 		self.objects = {}
+
+	def filter(self, min_obj_size: int):
+		if self.n_obj == 0:
+			return np.ones(self.num, dtype=bool)
+		min_obj_size /= self.dim ** 2
+		accepted = [
+			obj.size > min_obj_size for
+			obj in self.objects.values()
+		]
+		accepted = functools.reduce(
+			np.logical_and, accepted)
+		return accepted
 
 	def compute_flow(self):
 		if self.category == 'obj':
 			self.v_slf = np.zeros((self.num, 3))
 		else:
 			self.v_slf = self.sample_vel(*self.vlim_slf)
-		v_tr, x_env = self.add_objects()
-		v_tr -= self._prepvslf(self.v_slf)
+		v_tr_obj, x_env = self.add_objects()
+		v_tr = self._compute_v_tr(v_tr_obj)
 		v_rot = self._compute_v_rot(x_env)
 		self.alpha_dot = compute_alpha_dot(
 			v=v_tr - v_rot, x=x_env, axis=3)
@@ -83,11 +104,11 @@ class OpticFlow(object):
 				alpha=alpha,
 				size=mask.mean(-1).mean(-1),
 				v=self.sample_vel(*self.vlim_obj),
-				r=cart2polar(self.apply_rot(pos, True)),
+				r=cart2polar(self.apply_rot(pos)),
 			)
 			self.objects[obj_i] = _Obj(**kws)
 			obj_masks[obj_i] = mask
-		x_env, v_tr = self._compute_obj_v(obj_masks)
+		v_tr, x_env = self._compute_obj_v(obj_masks)
 		return v_tr, x_env
 
 	def compute_coords(self, fix: np.ndarray = None):
@@ -115,13 +136,25 @@ class OpticFlow(object):
 		)
 
 	def sample_vel(self, vmin: float, vmax: float):
-		v = self.rng.normal(size=(self.num, 3))
-		v /= sp_lin.norm(v, axis=-1, keepdims=True)
-		v *= self.rng.uniform(
+		speed = self.rng.uniform(
 			low=vmin,
 			high=vmax,
-			size=(self.num, 1),
+			size=self.num,
 		)
+		if self.category == 'terrain':
+			phi_bound = self.kws.get('terrain_phi', 80)
+			phi_bound = np.sin(np.deg2rad(phi_bound))
+			phi = np.arcsin(self.rng.uniform(
+				low=-phi_bound,
+				high=phi_bound,
+				size=self.num,
+			)) + cart2polar(self.fix)[:, 2]
+			v = [speed, np.ones(self.num) * np.pi/2, phi]
+			v = polar2cart(np.stack(v, axis=1))
+		else:
+			v = self.rng.normal(size=(self.num, 3))
+			v /= sp_lin.norm(v, axis=-1, keepdims=True)
+			v *= speed.reshape(-1, 1)
 		return v
 
 	def sample_pos(self):
@@ -154,7 +187,12 @@ class OpticFlow(object):
 		while True:
 			x = self.rng.uniform(**kws)
 			y = self.rng.uniform(**kws)
-			if abs(x) + abs(y) < 1:
+			l1 = abs(x) + abs(y)
+			cond = l1 < bound
+			if self.category == 'terrain':
+				r = self.kws.get('terrain_fix', 0.75)
+				cond = cond and l1 >= r * bound
+			if cond:
 				fix[i] = x, y
 				i += 1
 			if i == self.num:
@@ -165,7 +203,7 @@ class OpticFlow(object):
 	def apply_rot(
 			self,
 			arr: np.ndarray,
-			transpose: bool, ):
+			transpose: bool = True, ):
 		etc = ''.join(list(map(
 			chr, range(98, 123)
 		)))[:arr.ndim - 2]
@@ -207,15 +245,38 @@ class OpticFlow(object):
 					v = self.objects[obj_i].v[i, j]
 					v_tr[i, ..., j][m] = v
 			z_env[i] = z_fused
+		self.z_env = z_env.reshape((self.num, self.dim, self.dim))
 		x_env = self.compute_x_env(z_env)
-		x_env = self.apply_rot(x_env, transpose=True)
-		v_tr = self.apply_rot(v_tr, transpose=True)
-		return x_env, v_tr
+		x_env = self.apply_rot(x_env)
+		v_tr = self.apply_rot(v_tr)
+		return v_tr, x_env
+
+	def _compute_v_tr(self, v_tr_obj: np.ndarray):
+		v_tr_slf = self.apply_rot(self.v_slf)
+		if self.residual:
+			v_tr = v_tr_obj.copy()
+			for i in range(self.num):
+				for j in range(3):
+					m = v_tr_obj[i, ..., j] == 0.
+					v_tr[i, ..., j][m] = -v_tr_slf[i, j]
+		else:
+			v_tr_slf = _expand(v_tr_slf, self.dim, 1)
+			v_tr_slf = _expand(v_tr_slf, self.dim, 1)
+			v_tr = v_tr_obj - v_tr_slf
+		return v_tr
 
 	def _compute_v_rot(self, x: np.ndarray):
 		if self.category in ['obj', 'transl']:
 			return 0
-		if self.category == 'fixate':
+		if self.category == 'terrain':
+			ctr = self.dim // 2
+			gaze = self.fix.copy()
+			gaze[:, 2] = self.z_env[:, ctr, ctr]
+			omega = compute_omega(
+				gaze=gaze,
+				v=-self.v_slf,
+			)
+		elif self.category in 'fixate':
 			omega = compute_omega(
 				gaze=self.fix,
 				v=-self.v_slf,
@@ -223,7 +284,8 @@ class OpticFlow(object):
 		elif self.category == 'pursuit':
 			omega = compute_omega(
 				gaze=self.objects[0].pos,
-				v=self.objects[0].v - self.v_slf,
+				v=self.objects[0].v if self.residual
+				else self.objects[0].v - self.v_slf,
 			)
 		else:
 			raise RuntimeError(self.category)
@@ -234,7 +296,7 @@ class OpticFlow(object):
 		return v_rot
 
 	def _prepvslf(self, v: np.ndarray):
-		v_transl = self.apply_rot(v, transpose=True)
+		v_transl = self.apply_rot(v)
 		v_transl = _expand(v_transl, self.dim, 1)
 		v_transl = _expand(v_transl, self.dim, 1)
 		return v_transl
@@ -267,7 +329,7 @@ class OpticFlow(object):
 		assert np.all(np.round(
 			x_bg[..., -1], decimals=7,
 		) == self.z_bg), "wall is flat"
-		self.x = self.apply_rot(x_bg, transpose=True)
+		self.x = self.apply_rot(x_bg)
 		return
 
 	def _compute_xyz_old(self):

@@ -194,16 +194,16 @@ class TrainerVAE(_BaseTrainer):
 			**kwargs,
 	):
 		super(TrainerVAE, self).__init__(
-			model=model,
-			cfg=cfg,
-			**kwargs,
-		)
+			model=model, cfg=cfg, **kwargs)
 		self.n_iters = self.cfg.epochs * len(self.dl_trn)
-		self.alphas = kl_balancer_coeff(
-			groups=self.model.cfg.groups,
-			device=self.device,
-			fun='square',
-		)
+		if self.cfg.kl_balancer is not None:
+			alphas = kl_balancer_coeff(
+				groups=self.model.cfg.groups,
+				fun=self.cfg.kl_balancer,
+			)
+			self.alphas = self.to(alphas)
+		else:
+			self.alphas = None
 		if self.cfg.kl_anneal_cycles == 0:
 			self.betas = beta_anneal_linear(
 				n_iters=self.n_iters,
@@ -539,29 +539,28 @@ class TrainerVAE(_BaseTrainer):
 			vmax=0.65,
 			cmap='rocket',
 			linecolor='dimgrey',
-			cbar_kws={'pad': 0.001, 'shrink': 0.8},
+			cbar_kws={'pad': 0.001, 'shrink': 0.7},
 			figsize=(20, 2.5),
 			annot=False,
 			display=False,
 		)
 		figs['fig/mutual_info'] = fig
 
-		# mutual info normalized by scales
-		scales, level_ids = self.model.latent_scales()
 		# TODO: do mutual info normalized by scales plot
+		# scales, level_ids = self.model.latent_scales()
 
 		# hist (latents)
-		fig, _ = plot_latents_hist(
-			z=z_sample,
-			scales=scales,
-			display=False,
-		)
-		figs['fig/hist_z'] = fig
+		# fig, _ = plot_latents_hist(
+		# 	z=z_sample,
+		# 	scales=scales,
+		# 	display=False,
+		# )
+		# figs['fig/hist_z'] = fig
 
 		# hist (samples)
-		fig, _ = plot_opticflow_hist(
-			x=x_sample, display=False)
-		figs['fig/hist_x_sample'] = fig
+		# fig, _ = plot_opticflow_hist(
+		# 	x=x_sample, display=False)
+		# figs['fig/hist_x_sample'] = fig
 		return x_sample, z_sample, regr, figs
 
 	def setup_data(self, gpu: bool = True):
