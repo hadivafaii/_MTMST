@@ -1,5 +1,3 @@
-import torch.optim
-
 from figures.fighelper import *
 from .dataset import ROFL
 from analysis.regression import regress
@@ -19,7 +17,8 @@ class _BaseTrainer(object):
 		self.cfg = cfg
 		self.verbose = verbose
 		self.device = torch.device(device)
-		self.model = model.to(self.device).eval()
+		self.model = model.to(self.device)
+		self.stats = collections.defaultdict(list)
 		self.n_iters = None
 
 		self.writer = None
@@ -290,14 +289,20 @@ class TrainerVAE(_BaseTrainer):
 					parameters=self.model.parameters(),
 					max_norm=self.cfg.grad_clip,
 				).item()
+				cond_bad = grad_norm > 1.5 * self.cfg.grad_clip
 			else:
 				grad_norm = None
+				cond_bad = False
+			cond_bad = (
+				cond_bad or
+				np.isnan(loss.item())
+			)
+			if cond_bad:
+				self.stats['bad'].append(gstep)
+				self.stats['bad_grad'].append(grad_norm)
+				self.stats['bad_loss'].append(loss.item())
 			self.writer.add_scalar('grads/loss_before_skip', loss, gstep)
 			self.writer.add_scalar('grads/norm_before_skip', grad_norm, gstep)
-			# if not _check_nans(loss, gstep):
-			# if grad_norm > 1e4:
-			# print(f'gstep={gstep}, grad norm = {grad_norm} . . . skipped')
-			# continue
 			self.optim.step()
 			cond_schedule = (
 				gstep > kwargs['n_iters_warmup']
@@ -597,12 +602,13 @@ def _check_grads(
 		return True
 
 
-def _check_nans(loss, gstep: int):
+def _check_nans(loss, gstep: int, verbose: bool = True):
 	if torch.isnan(loss).sum().item():
 		msg = 'nan encountered in loss. '
 		msg += 'optimizer will detect this & skip. '
 		msg += f"global step = {gstep}"
-		print(msg)
+		if verbose:
+			print(msg)
 		return True
 	else:
 		return False

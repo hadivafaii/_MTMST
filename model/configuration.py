@@ -1,7 +1,5 @@
 from utils.generic import *
 from utils.process import load_cellinfo
-
-
 _OPTIM_CHOICES = ['adamax', 'adam', 'adamw', 'radam', 'sgd']
 _SCHEDULER_CHOICES = ['cosine', 'exponential', 'step', 'cyclic', None]
 
@@ -26,7 +24,7 @@ class _BaseConfig(object):
 			self.h_file = pjoin(self.data_dir, f"{h_file}.h5")
 			self.h_pre = pjoin(self.data_dir, f"{h_pre}.h5")
 			self._mkdirs()
-			self.save(self.save_dir)
+			self.save()
 			# self._load_cellinfo()
 			self.seed = seed
 			self.set_seed()
@@ -53,15 +51,16 @@ class _BaseConfig(object):
 		random.seed(self.seed)
 		return
 
-	def save(self, save_dir: str, verbose: bool = False):
+	def save(self, save_dir: str = None, verbose: bool = False):
 		fname = type(self).__name__
+		save_dir = save_dir if save_dir else self.save_dir
 		file = pjoin(save_dir, f"{fname}.json")
 		if os.path.isfile(file):
 			return
 		params = inspect.signature(self.__init__).parameters
 		vals = {
 			k: getattr(self, k) for k, p in params.items()
-			if int(p.kind) == 1 and hasattr(self, k)
+			if (int(p.kind) == 1 and hasattr(self, k))
 			# first 'if' gets rid of args, kwargs
 		}
 		save_obj(
@@ -96,6 +95,7 @@ class ConfigVAE(_BaseConfig):
 			n_cells_per_cond: int = 2,
 			balanced_recon: bool = True,
 			activation_fn: str = 'swish',
+			sigma_clamp: float = 5.0,
 			scale_init: bool = False,
 			residual_kl: bool = True,
 			rot_equiv: bool = False,
@@ -137,6 +137,7 @@ class ConfigVAE(_BaseConfig):
 		)
 		self.balanced_recon = balanced_recon
 		self.activation_fn = activation_fn
+		self.sigma_clamp = sigma_clamp
 		self.residual_kl = residual_kl
 		self.scale_init = scale_init
 		self.ada_groups = ada_groups
@@ -156,6 +157,7 @@ class ConfigVAE(_BaseConfig):
 				f"z-{self.n_latent_per_group}",
 				str(list(reversed(self.groups))),
 			]).replace(' ', ''),
+			# f"clamp-{self.sigma_clamp}",
 			f"cells-{self.n_cells_per_cond}",
 		]
 		if self.n_pre_blocks > 0:
@@ -201,7 +203,7 @@ class ConfigTrain(_BaseConfig):
 			scheduler_type: str = 'cosine',
 			scheduler_kws: dict = None,
 			spectral_reg: bool = False,
-			grad_clip: float = None,
+			grad_clip: float = 1000,
 			chkpt_freq: int = 50,
 			eval_freq: int = 5,
 			log_freq: int = 30,

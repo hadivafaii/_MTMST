@@ -31,7 +31,11 @@ class VAE(Module):
 		idx = 0
 		param0 = self.enc_sampler[idx](s)
 		mu_q, logsig_q = torch.chunk(param0, 2, dim=1)
-		dist = Normal(mu_q, logsig_q)  # for the first approx. posterior
+		dist = Normal(
+			mu=mu_q,
+			logsig=logsig_q,
+			clamp=self.cfg.sigma_clamp,
+		)  # first approx. posterior
 		z = dist.sample()
 		q_all = [dist]
 		latents = [z]
@@ -39,7 +43,8 @@ class VAE(Module):
 		# prior for z0
 		dist = Normal(
 			mu=torch.zeros_like(z),
-			logsigma=torch.zeros_like(z),
+			logsig=torch.zeros_like(z),
+			clamp=self.cfg.sigma_clamp,
 		)
 		p_all = [dist]
 
@@ -52,7 +57,11 @@ class VAE(Module):
 					# form prior
 					param = self.dec_sampler[idx - 1](s)
 					mu_p, logsig_p = torch.chunk(param, 2, dim=1)
-					dist = Normal(mu_p, logsig_p)
+					dist = Normal(
+						mu=mu_p,
+						logsig=logsig_p,
+						clamp=self.cfg.sigma_clamp,
+					)
 					p_all.append(dist)
 
 					# form encoder
@@ -62,10 +71,15 @@ class VAE(Module):
 					if self.cfg.residual_kl:
 						dist = Normal(
 							mu=mu_q + mu_p,
-							logsigma=logsig_q + logsig_p,
+							logsig=logsig_q + logsig_p,
+							clamp=self.cfg.sigma_clamp,
 						)
 					else:
-						dist = Normal(mu_q, logsig_q)
+						dist = Normal(
+							mu=mu_q,
+							logsig=logsig_q,
+							clamp=self.cfg.sigma_clamp,
+						)
 					q_all.append(dist)
 					z = dist.sample()
 					latents.append(z)
@@ -86,11 +100,16 @@ class VAE(Module):
 	def sample(self, n: int, t: float = 1.0, device: torch.device = None):
 		z0_sz = [n] + self.z0_sz
 		mu = torch.zeros(z0_sz)
-		logsigma = torch.zeros(z0_sz)
+		logsig = torch.zeros(z0_sz)
 		if device is not None:
 			mu = mu.to(device)
-			logsigma = logsigma.to(device)
-		dist = Normal(mu, logsigma, temp=t)
+			logsig = logsig.to(device)
+		dist = Normal(
+			mu=mu,
+			logsig=logsig,
+			temperature=t,
+			clamp=self.cfg.sigma_clamp,
+		)
 		z = dist.sample()
 		p_all = [dist]
 		latents = [z]
@@ -103,8 +122,13 @@ class VAE(Module):
 				if idx > 0:
 					# form prior
 					param = self.dec_sampler[idx - 1](s)
-					mu, logsigma = torch.chunk(param, 2, dim=1)
-					dist = Normal(mu, logsigma, t)
+					mu, logsig = torch.chunk(param, 2, dim=1)
+					dist = Normal(
+						mu=mu,
+						logsig=logsig,
+						temperature=t,
+						clamp=self.cfg.sigma_clamp,
+					)
 					p_all.append(dist)
 					z = dist.sample()
 					latents.append(z)

@@ -15,14 +15,14 @@ class OpticFlow(object):
 	def __init__(
 			self,
 			category: str,
-			num: int = 1,
+			n: int = 1,
 			n_obj: int = 1,
 			fov: float = 45,
 			res: float = 1.0,
 			obj_r: float = 0.2,
 			obj_bound: float = 0.97,
-			obj_zlim: Tuple[float, float] = (0.5, 1),
-			vlim_obj: Tuple[float, float] = (0.01, 2.0),
+			obj_zlim: Tuple[float, float] = (0.5, 1.0),
+			vlim_obj: Tuple[float, float] = (0.01, 1.0),
 			vlim_slf: Tuple[float, float] = (0.01, 1.0),
 			residual: bool = False,
 			z_bg: float = 1.0,
@@ -32,7 +32,7 @@ class OpticFlow(object):
 		super(OpticFlow, self).__init__()
 		assert category in _CHOICES,\
 			f"allowed categories:\n{_CHOICES}"
-		assert isinstance(num, int) and num > 0
+		assert isinstance(n, int) and n > 0
 		assert isinstance(n_obj, int) and n_obj >= 0
 		assert isinstance(z_bg, float) and z_bg > 0
 		if category in ['obj', 'terrain', 'pursuit']:
@@ -42,7 +42,7 @@ class OpticFlow(object):
 		if category == 'terrain':
 			vlim_obj = (0, 0)
 		self.category = category
-		self.num = num
+		self.n = n
 		self.n_obj = n_obj
 		self.fov = fov
 		self.res = res
@@ -64,7 +64,7 @@ class OpticFlow(object):
 
 	def filter(self, min_obj_size: int):
 		if self.n_obj == 0:
-			return np.ones(self.num, dtype=bool)
+			return np.ones(self.n, dtype=bool)
 		min_obj_size /= self.dim ** 2
 		accepted = [
 			obj.size > min_obj_size for
@@ -75,10 +75,7 @@ class OpticFlow(object):
 		return accepted
 
 	def compute_flow(self):
-		if self.category == 'obj':
-			self.v_slf = np.zeros((self.num, 3))
-		else:
-			self.v_slf = self.sample_vel(*self.vlim_slf)
+		self.v_slf = self.sample_vel(*self.vlim_slf)
 		v_tr_obj, x_env = self.add_objects()
 		v_tr = self._compute_v_tr(v_tr_obj)
 		v_rot = self._compute_v_rot(x_env)
@@ -87,15 +84,21 @@ class OpticFlow(object):
 		return x_env, v_tr, v_rot
 
 	def add_objects(self):
+		"""
 		# pos:		real coordinate system (meters)
 		# alpha:	self coordinate system (radians)
+		:return:
+			v_tr:	objects velocity (m/s)
+			x_env:	objects embedded in space (m)
+			both are measured in self coordinate system
+		"""
 		if self.n_obj == 0:
 			return 0, self.x
 		obj_masks = {}
 		for obj_i in range(self.n_obj):
 			if self.category == 'pursuit' and obj_i == 0:
 				pos = _replace_z(self.fix, self.sample_z())
-				alpha = np.zeros((self.num, 2))
+				alpha = np.zeros((self.n, 2))
 			else:
 				pos, alpha = self.sample_pos()
 			mask = self.compute_obj_mask(pos)
@@ -121,9 +124,9 @@ class OpticFlow(object):
 
 	def compute_x_env(self, z_env: np.ndarray = None):
 		if z_env is None:
-			z_env = self.z_bg * np.ones((self.num, self.dim ** 2))
-		x_env = np.zeros((self.num, self.dim, self.dim, 3))
-		for i in range(self.num):
+			z_env = self.z_bg * np.ones((self.n, self.dim ** 2))
+		x_env = np.zeros((self.n, self.dim, self.dim, 3))
+		for i in range(self.n):
 			_x = _replace_z(flatten_arr(self.gamma[i]), z_env[i])
 			x_env[i] = _x.reshape(self.dim, self.dim, 3)
 		return x_env
@@ -132,14 +135,14 @@ class OpticFlow(object):
 		return self.rng.uniform(
 			low=self.obj_zlim[0],
 			high=self.obj_zlim[1],
-			size=self.num,
+			size=self.n,
 		)
 
 	def sample_vel(self, vmin: float, vmax: float):
 		speed = self.rng.uniform(
 			low=vmin,
 			high=vmax,
-			size=self.num,
+			size=self.n,
 		)
 		if self.category == 'terrain':
 			phi_bound = self.kws.get('terrain_phi', 80)
@@ -147,12 +150,12 @@ class OpticFlow(object):
 			phi = np.arcsin(self.rng.uniform(
 				low=-phi_bound,
 				high=phi_bound,
-				size=self.num,
+				size=self.n,
 			)) + cart2polar(self.fix)[:, 2]
-			v = [speed, np.ones(self.num) * np.pi/2, phi]
+			v = [speed, np.ones(self.n) * np.pi/2, phi]
 			v = polar2cart(np.stack(v, axis=1))
 		else:
-			v = self.rng.normal(size=(self.num, 3))
+			v = self.rng.normal(size=(self.n, 3))
 			v /= sp_lin.norm(v, axis=-1, keepdims=True)
 			v *= speed.reshape(-1, 1)
 		return v
@@ -167,20 +170,20 @@ class OpticFlow(object):
 		alpha = self.rng.choice(
 			a=alpha,
 			replace=True,
-			size=(self.num, 2),
+			size=(self.n, 2),
 		)
 		theta, phi = radself2polar(
 			a=alpha[:, 0],
 			b=alpha[:, 1],
 		)
-		u = [np.ones(self.num), theta, phi]
+		u = [np.ones(self.n), theta, phi]
 		u = polar2cart(np.stack(u, axis=1))
 		u = self.apply_rot(u, transpose=False)
 		pos = _replace_z(u, self.sample_z())
 		return pos, alpha
 
 	def sample_fix(self):
-		fix = np_nans((self.num, 2))
+		fix = np_nans((self.n, 2))
 		bound = 1 / np.tan(np.deg2rad(self.fov))
 		kws = dict(low=-bound, high=bound)
 		i = 0
@@ -195,7 +198,7 @@ class OpticFlow(object):
 			if cond:
 				fix[i] = x, y
 				i += 1
-			if i == self.num:
+			if i == self.n:
 				break
 		assert not np.isnan(fix).sum()
 		return fix
@@ -215,8 +218,8 @@ class OpticFlow(object):
 		return np.einsum(operands, self.R, arr)
 
 	def compute_obj_mask(self, pos: np.ndarray):
-		mask = np.zeros((self.num, self.dim, self.dim))
-		for i in range(self.num):
+		mask = np.zeros((self.n, self.dim, self.dim))
+		for i in range(self.n):
 			u = flatten_arr(self.gamma[i])
 			u = _replace_z(u, pos[i, 2])
 			d = (pos[i] - u)[:, :2]
@@ -225,9 +228,9 @@ class OpticFlow(object):
 		return mask.astype(bool)
 
 	def _compute_obj_v(self, obj_masks: dict):
-		z_env = np.zeros((self.num, self.dim ** 2))
-		v_tr = np.zeros((self.num, self.dim, self.dim, 3))
-		for i in range(self.num):
+		z_env = np.zeros((self.n, self.dim ** 2))
+		v_tr = np.zeros((self.n, self.dim, self.dim, 3))
+		for i in range(self.n):
 			obj_z = {
 				obj_i: obj.pos[i, 2] for
 				obj_i, obj in self.objects.items()
@@ -245,7 +248,7 @@ class OpticFlow(object):
 					v = self.objects[obj_i].v[i, j]
 					v_tr[i, ..., j][m] = v
 			z_env[i] = z_fused
-		self.z_env = z_env.reshape((self.num, self.dim, self.dim))
+		self.z_env = z_env.reshape((self.n, self.dim, self.dim))
 		x_env = self.compute_x_env(z_env)
 		x_env = self.apply_rot(x_env)
 		v_tr = self.apply_rot(v_tr)
@@ -255,7 +258,7 @@ class OpticFlow(object):
 		v_tr_slf = self.apply_rot(self.v_slf)
 		if self.residual:
 			v_tr = v_tr_obj.copy()
-			for i in range(self.num):
+			for i in range(self.n):
 				for j in range(3):
 					m = v_tr_obj[i, ..., j] == 0.
 					v_tr[i, ..., j][m] = -v_tr_slf[i, j]
@@ -295,12 +298,6 @@ class OpticFlow(object):
 		v_rot = np.einsum(v_rot, mat, x)
 		return v_rot
 
-	def _prepvslf(self, v: np.ndarray):
-		v_transl = self.apply_rot(v)
-		v_transl = _expand(v_transl, self.dim, 1)
-		v_transl = _expand(v_transl, self.dim, 1)
-		return v_transl
-
 	def _compute_fix(self, fix: np.ndarray):
 		fix = _check_input(fix, 0)
 		assert fix.shape[1] == 2, "fix = (X0, Y0)"
@@ -330,31 +327,6 @@ class OpticFlow(object):
 			x_bg[..., -1], decimals=7,
 		) == self.z_bg), "wall is flat"
 		self.x = self.apply_rot(x_bg)
-		return
-
-	def _compute_xyz_old(self):
-		"""
-		# x: 		measured in self coordinate system
-		# x_bg:		measured in real coordinate system
-		# gamma:	points in real space corresponding
-		# 			to each retinal grid point with a
-		#			self z of 1
-		"""
-		gamma = 'aij, xyj -> axyi'
-		self.gamma = np.einsum(
-			gamma, self.R, self.tan)
-		shape = (1, self.dim, self.dim, 1)
-		self.x = self.z_bg * np.concatenate([
-			self.tan[..., 0].reshape(shape),
-			self.tan[..., 1].reshape(shape),
-			np.ones(shape),
-		], axis=-1) / self.gamma[..., [-1]]
-		# test correctness:
-		x_bg = self.apply_rot(
-			self.x, transpose=False)
-		assert np.all(np.round(
-			x_bg[..., -1], decimals=7,
-		) == self.z_bg), "wall is flat"
 		return
 
 	def _compute_rot(self):
@@ -394,7 +366,7 @@ class OpticFlow(object):
 		return
 
 
-class Simulation(object):
+class SimulationOLD(object):
 	def __init__(
 			self,
 			num: int,
@@ -404,8 +376,8 @@ class Simulation(object):
 			ratio: float = 0.8,
 			verbose: bool = False,
 	):
-		super(Simulation, self).__init__()
-		self.num = num
+		super(SimulationOLD, self).__init__()
+		self.n = num
 		self.fov = fov
 		self.res = res
 		self.ratio = ratio
@@ -421,19 +393,19 @@ class Simulation(object):
 		if parallel:
 			with joblib.parallel_backend('multiprocessing'):
 				alpha_dot = joblib.Parallel(n_jobs=-1)(
-					joblib.delayed(of_fit_single)(
+					joblib.delayed(of_fit_single_del)(
 						self.fov,
 						self.res,
 						self.fix[i],
 						self.vel_slf[:, i],
 						self.vel_obj[:, i],
 						self.pos_obj[:, i],
-					) for i in range(self.num)
+					) for i in range(self.n)
 				)
 		else:
 			alpha_dot = []
-			for i in range(self.num):
-				alpha_dot.append(of_fit_single(
+			for i in range(self.n):
+				alpha_dot.append(of_fit_single_del(
 					self.fov,
 					self.res,
 					self.fix[i],
@@ -447,7 +419,7 @@ class Simulation(object):
 		return self
 
 	def sample(self, n: int = None):
-		n = n if n else self.num
+		n = n if n else self.n
 		fix = np_nans((n, 2))
 		pos_obj = np_nans((3, n))
 		vel_slf = np_nans((3, n))
@@ -464,7 +436,7 @@ class Simulation(object):
 		return self
 
 	def _of_fit(self, i: int):
-		of = OpticFlowVec(self.fov, self.res).compute_coords(self.fix[i])
+		of = OpticFlowVecOLD(self.fov, self.res).compute_coords(self.fix[i])
 		x = of.compute_flow(self.vel_slf[:, i], self.pos_obj[:, i], self.vel_obj[:, i])
 		x = x[..., 0, 0]
 		return x
@@ -501,7 +473,7 @@ class Simulation(object):
 		return v
 
 
-class SimulationMult(object):
+class SimulationMultOLD(object):
 	def __init__(
 			self,
 			fov: float,
@@ -511,7 +483,7 @@ class SimulationMult(object):
 			seed: int = 0,
 			verbose: bool = False,
 	):
-		super(SimulationMult, self).__init__()
+		super(SimulationMultOLD, self).__init__()
 		self.fov = fov
 		self.n_fix = n_fix
 		self.n_slf = n_slf
@@ -628,7 +600,7 @@ class SimulationMult(object):
 		return
 
 
-class OpticFlowVec(object):
+class OpticFlowVecOLD(object):
 	def __init__(
 			self,
 			fov: float = 45,
@@ -636,7 +608,7 @@ class OpticFlowVec(object):
 			obj_r: float = 0.2,
 			z_bg: float = 1,
 	):
-		super(OpticFlowVec, self).__init__()
+		super(OpticFlowVecOLD, self).__init__()
 		assert z_bg > 0
 		self.fov = fov
 		self.res = res
@@ -980,7 +952,7 @@ class VelField(Obj):
 		if x.ndim == 4:
 			x = np.expand_dims(x, 0)
 		assert x.ndim == 5 and x.shape[-1] == 2
-		self.num, self.nt, self.nx, self.ny, _ = x.shape
+		self.n, self.nt, self.nx, self.ny, _ = x.shape
 		self.x = x
 		self.rho = None
 		self.theta = None
@@ -994,8 +966,8 @@ class VelField(Obj):
 		tker = self.u[..., idx]
 		sker = self.v[:, idx, :]
 		sker = sker.reshape(
-			(self.num, self.nx, self.ny, 2))
-		for i in range(self.num):
+			(self.n, self.nx, self.ny, 2))
+		for i in range(self.n):
 			maxlag = np.argmax(np.abs(tker[i]))
 			if tker[i, maxlag] < 0:
 				tker[i] *= -1
@@ -1008,17 +980,17 @@ class VelField(Obj):
 			normalize: bool = True, ):
 		x = x if x is not None else self.x
 		ns = self.nx * self.ny * 2
-		u = np.zeros((self.num, self.nt, self.nt))
-		s = np.zeros((self.num, self.nt))
-		v = np.zeros((self.num, ns, ns))
+		u = np.zeros((self.n, self.nt, self.nt))
+		s = np.zeros((self.n, self.nt))
+		v = np.zeros((self.n, ns, ns))
 		for i, a in enumerate(x):
 			u[i], s[i], v[i] = sp_lin.svd(
 				a.reshape(self.nt, ns))
 
-		max_lags = np.zeros(self.num)
-		rho = np.zeros((self.num, self.nx, self.ny))
-		theta = np.zeros((self.num, self.nx, self.ny))
-		for i in range(self.num):
+		max_lags = np.zeros(self.n)
+		rho = np.zeros((self.n, self.nx, self.ny))
+		theta = np.zeros((self.n, self.nx, self.ny))
+		for i in range(self.n):
 			tker = u[i, :, 0]
 			sker = v[i, 0].reshape(self.nx, self.ny, 2)
 			max_lag = np.argmax(np.abs(tker))
@@ -1061,10 +1033,10 @@ class VelField(Obj):
 				kwargs[k] = v
 		figsize = (
 			kwargs['fig_x'],
-			kwargs['fig_y'] * self.num,
+			kwargs['fig_y'] * self.n,
 		)
 		fig, axes = create_figure(
-			nrows=self.num,
+			nrows=self.n,
 			ncols=5,
 			figsize=figsize,
 			sharex='col',
@@ -1078,7 +1050,7 @@ class VelField(Obj):
 			'vmax': 2 * np.pi,
 			'vmin': 0,
 		}
-		for i in range(self.num):
+		for i in range(self.n):
 			vminmax = np.max(np.abs(sker[i]))
 			kws2 = {
 				'cmap': 'bwr',
@@ -1182,12 +1154,6 @@ class VelField(Obj):
 		return figs
 
 
-def of_fit_single(fov, res, fix, vel_self, vel_obj, pos_obj):
-	of = OpticFlowVec(fov, res).compute_coords(fix)
-	x = of.compute_flow(vel_self, pos_obj, vel_obj)
-	return x[..., 0, 0]
-
-
 def compute_alpha_dot(
 		v: np.ndarray,
 		x: np.ndarray,
@@ -1218,7 +1184,7 @@ def compute_alpha_dot(
 
 def compute_omega(gaze: np.ndarray, v: np.ndarray):
 	# gaze = self.fix when category == 'fixate'
-	# gaze = obj pos when category == 'pursuit'
+	# gaze = obj.pos when category == 'pursuit'
 	norm = sp_lin.norm(gaze, axis=-1)
 	coeff = 'ai, ai -> a'
 	coeff = np.einsum(coeff, v, gaze)
@@ -1279,3 +1245,9 @@ def _check_input(x, axis):
 	if not x.ndim == 2:
 		x = np.expand_dims(x, axis)
 	return x
+
+
+def of_fit_single_del(fov, res, fix, vel_self, vel_obj, pos_obj):
+	of = OpticFlowVecOLD(fov, res).compute_coords(fix)
+	x = of.compute_flow(vel_self, pos_obj, vel_obj)
+	return x[..., 0, 0]

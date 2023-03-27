@@ -5,16 +5,16 @@ class Normal:
 	def __init__(
 			self,
 			mu: torch.Tensor,
-			logsigma: torch.Tensor,
-			temp: float = 1.0,
+			logsig: torch.Tensor,
+			temperature: float = 1.0,
+			clamp: float = 5.0,
 			seed: int = None,
 	):
-		self.mu = soft_clamp(mu)
-		logsigma = soft_clamp(logsigma)
-		self.sigma = torch.exp(logsigma)  # + 1e-2
-		# we don't need above after soft clamp (?)
-		if temp != 1.0:
-			self.sigma *= temp
+		self.mu = softclamp(mu, 3*clamp)
+		logsig = softclamp(logsig, clamp)
+		self.sigma = torch.exp(logsig)
+		if temperature != 1.0:
+			self.sigma *= temperature
 		if seed is not None:
 			self.rng = torch.Generator()
 			self.rng.manual_seed(seed)
@@ -43,7 +43,7 @@ class Normal:
 		return kl
 
 
-def soft_clamp(x: torch.Tensor, c: float = 10.0):
+def softclamp(x: torch.Tensor, c: float = 5.0):
 	return x.div(c).tanh_().mul(c)
 
 
