@@ -95,12 +95,12 @@ class ConfigVAE(_BaseConfig):
 			n_cells_per_cond: int = 2,
 			balanced_recon: bool = True,
 			activation_fn: str = 'swish',
-			sigma_clamp: float = 5.0,
+			# sigma_clamp: float = 5.0,
 			scale_init: bool = False,
 			residual_kl: bool = True,
 			rot_equiv: bool = False,
 			ada_groups: bool = True,
-			spectral_norm: int = 1,
+			spectral_norm: int = 0,
 			compress: bool = True,
 			use_bn: bool = False,
 			use_se: bool = True,
@@ -137,7 +137,7 @@ class ConfigVAE(_BaseConfig):
 		)
 		self.balanced_recon = balanced_recon
 		self.activation_fn = activation_fn
-		self.sigma_clamp = sigma_clamp
+		# self.sigma_clamp = sigma_clamp
 		self.residual_kl = residual_kl
 		self.scale_init = scale_init
 		self.ada_groups = ada_groups
@@ -198,11 +198,12 @@ class ConfigTrain(_BaseConfig):
 			kl_beta_min: float = 1e-4,
 			kl_anneal_cycles: int = 0,
 			kl_anneal_portion: float = 0.3,
-			kl_const_portion: float = 1e-2,
+			kl_const_portion: float = 1e-3,
 			kl_balancer: str = 'equal',
 			scheduler_type: str = 'cosine',
 			scheduler_kws: dict = None,
 			spectral_reg: bool = False,
+			ema_rate: float = 1 - 1e-3,
 			grad_clip: float = 1000,
 			chkpt_freq: int = 50,
 			eval_freq: int = 5,
@@ -231,6 +232,7 @@ class ConfigTrain(_BaseConfig):
 		self.scheduler_type = scheduler_type
 		self._set_scheduler_kws(scheduler_kws)
 		self.spectral_reg = spectral_reg
+		self.ema_rate = ema_rate
 		self.grad_clip = grad_clip
 		self.chkpt_freq = chkpt_freq
 		self.eval_freq = eval_freq

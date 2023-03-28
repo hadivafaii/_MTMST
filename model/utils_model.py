@@ -40,38 +40,29 @@ def beta_anneal_linear(
 	return betas
 
 
-def kl_balancer(kl_all, alpha=None, coeff=1.0, beta=1.0):
-	if alpha is not None and coeff < beta:
-		alpha = alpha.unsqueeze(0)
-
-		kl_all = torch.stack(kl_all, dim=1)
-		kl_coeff_i, kl_vals = kl_per_group(kl_all)
-		total_kl = torch.sum(kl_coeff_i)
-
-		kl_coeff_i = kl_coeff_i / alpha * total_kl
-		kl_coeff_i = kl_coeff_i / torch.mean(
-			kl_coeff_i, dim=1, keepdim=True)
-		kl_coeff_i *= beta
-		kl = torch.sum(kl_all * kl_coeff_i.detach(), dim=1)
-
-		# for reporting
-		kl_coeffs = kl_coeff_i.squeeze(0)
-	else:
-		kl_all = torch.stack(kl_all, dim=1)
-		kl_vals = torch.mean(kl_all, dim=0)
-		kl = torch.sum(kl_all, dim=1)
-		kl_coeffs = beta * torch.ones(len(kl_vals))
-	return coeff * kl, kl_coeffs, kl_vals
-
-
-def kl_per_group(kl_all) -> (torch.Tensor,) * 2:
+def kl_balancer(
+		kl_all: List[torch.Tensor],
+		alpha: torch.Tensor = None,
+		coeff: float = 1.0,
+		beta: float = 1.0,
+		eps: float = 0.01, ):
+	kl_all = torch.stack(kl_all, dim=1)
 	kl_vals = torch.mean(kl_all, dim=0)
-	kl_coeff_i = torch.mean(
-		torch.abs(kl_all),
-		keepdim=True,
-		dim=0,
-	) + 0.01
-	return kl_coeff_i, kl_vals
+	if alpha is not None and coeff < beta:
+		gamma = torch.mean(
+			kl_all.detach().abs(),
+			keepdim=True,
+			dim=0,
+		) + eps
+		gamma *= alpha.unsqueeze(0)
+		gamma /= torch.mean(
+			gamma, keepdim=True, dim=1)
+		kl = torch.sum(kl_all * gamma, dim=1)
+		gamma = gamma.squeeze(0)
+	else:
+		kl = torch.sum(kl_all, dim=1)
+		gamma = torch.ones(len(kl_vals))
+	return kl.mul(coeff), gamma, kl_vals
 
 
 def kl_balancer_coeff(groups: List[int], fun: str):
@@ -107,7 +98,6 @@ class AvgrageMeter(object):
 		self.avg = 0
 		self.sum = 0
 		self.cnt = 0
-		self.reset()
 
 	def reset(self):
 		self.avg = 0
@@ -184,11 +174,11 @@ def load_model(
 	][chkpt]
 	state_dict = pjoin(path, fname_pt)
 	state_dict = torch.load(state_dict)
+	ema = state_dict['model_ema'] is not None
 	model.load_state_dict(
 		state_dict=state_dict['model'],
 		strict=strict,
 	)
-	model.eval()
 	# cfg train
 	fname = next(
 		f for f in files if
@@ -206,9 +196,15 @@ def load_model(
 			cfg=cfg_train,
 			device=device,
 			verbose=verbose,
+			ema=ema,
 		)
 	else:
 		raise NotImplementedError
+	if ema:
+		trainer.model_ema.load_state_dict(
+			state_dict=state_dict['model_ema'],
+			strict=strict,
+		)
 	trainer.optim.load_state_dict(
 		state_dict['optim'])
 	if trainer.optim_schedule is not None:
@@ -297,10 +293,15 @@ class Module(nn.Module):
 		self.chkpt_dir = chkpt_dir
 		return
 
-	def save(self, checkpoint: int = -1, path: str = None):
+	def save(
+			self,
+			checkpoint: int = -1,
+			name: str = None,
+			path: str = None, ):
 		path = path if path else self.chkpt_dir
+		name = name if name else type(self).__name__
 		fname = '-'.join([
-			type(self).__name__,
+			name,
 			f"{checkpoint:04d}",
 			f"({now(True)}).bin",
 		])
