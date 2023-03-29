@@ -86,9 +86,10 @@ class VAE(Module):
 
 		return self.out(s), latents, q_all, p_all
 
+	@torch.no_grad()
 	def sample(
 			self,
-			n: int,
+			n: int = 1024,
 			t: float = 1.0,
 			device: torch.device = None, ):
 		kws = dict(

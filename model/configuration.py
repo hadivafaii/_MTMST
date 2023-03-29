@@ -190,11 +190,11 @@ class ConfigTrain(_BaseConfig):
 			optimizer: str = 'adamax',
 			optimizer_kws: dict = None,
 			lambda_anneal: bool = True,
-			lambda_norm: float = 1e-5,
-			lambda_init: float = 1e-9,
+			lambda_norm: float = 1e-3,
+			lambda_init: float = 0,
 			kl_beta: float = 1.0,
 			kl_beta_min: float = 1e-4,
-			kl_anneal_cycles: int = 0,
+			kl_anneal_cycles: int = 1,
 			kl_anneal_portion: float = 0.3,
 			kl_const_portion: float = 1e-3,
 			kl_balancer: str = 'equal',
@@ -203,6 +203,7 @@ class ConfigTrain(_BaseConfig):
 			spectral_reg: bool = False,
 			ema_rate: float = 1 - 1e-3,
 			grad_clip: float = 1000,
+			use_amp: bool = False,
 			chkpt_freq: int = 50,
 			eval_freq: int = 5,
 			log_freq: int = 30,
@@ -213,8 +214,8 @@ class ConfigTrain(_BaseConfig):
 		self.batch_size = batch_size
 		self.warmup_portion = warmup_portion
 		self.lambda_anneal = lambda_anneal
-		self.lambda_init = lambda_init
 		self.lambda_norm = lambda_norm
+		self.lambda_init = lambda_init
 		self.kl_beta = kl_beta
 		self.kl_beta_min = kl_beta_min
 		self.kl_balancer = kl_balancer
@@ -235,6 +236,7 @@ class ConfigTrain(_BaseConfig):
 		self.chkpt_freq = chkpt_freq
 		self.eval_freq = eval_freq
 		self.log_freq = log_freq
+		self.use_amp = use_amp
 
 	def name(self):
 		name = [
@@ -254,8 +256,8 @@ class ConfigTrain(_BaseConfig):
 			name.append(f"lambda({self.lambda_norm:0.2g})")
 		if self.grad_clip is not None:
 			name.append(f"grad({self.grad_clip})")
-		if self.kl_balancer is not None:
-			name.append(f"bal-{self.kl_balancer}")
+		# if self.kl_balancer is not None:
+		# 	name.append(f"bal-{self.kl_balancer}")
 		return '_'.join(name)
 
 	def _set_optim_kws(self, kws):

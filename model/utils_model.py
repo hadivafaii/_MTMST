@@ -190,7 +190,7 @@ def load_model(
 	fname = fname.split('.')[0]
 	fname = fname.replace('Config', '')
 	if fname == 'Train':
-		from .train import TrainerVAE
+		from .train_vae import TrainerVAE
 		trainer = TrainerVAE(
 			model=model,
 			cfg=cfg_train,
@@ -207,6 +207,8 @@ def load_model(
 		)
 	trainer.optim.load_state_dict(
 		state_dict['optim'])
+	trainer.scaler.load_state_dict(
+		state_dict['scaler'])
 	if trainer.optim_schedule is not None:
 		trainer.optim_schedule.load_state_dict(
 			state_dict.get('scheduler', {}))
