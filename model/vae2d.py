@@ -31,10 +31,7 @@ class VAE(Module):
 		idx = 0
 		param0 = self.enc_sampler[idx](self.enc0(s))
 		mu_q, logsig_q = torch.chunk(param0, 2, dim=1)
-		dist = Normal(
-			mu=mu_q,
-			logsig=logsig_q,
-		)  # first approx. posterior
+		dist = Normal(mu_q, logsig_q)  # first approx. posterior
 		z = dist.sample()
 		q_all = [dist]
 		latents = [z]
@@ -55,10 +52,7 @@ class VAE(Module):
 					# form prior
 					param = self.dec_sampler[idx - 1](s)
 					mu_p, logsig_p = torch.chunk(param, 2, dim=1)
-					dist = Normal(
-						mu=mu_p,
-						logsig=logsig_p,
-					)
+					dist = Normal(mu_p, logsig_p)
 					p_all.append(dist)
 
 					# form encoder
@@ -92,8 +86,16 @@ class VAE(Module):
 
 		return self.out(s), latents, q_all, p_all
 
-	def sample(self, n: int, t: float = 1.0, device: torch.device = None):
-		kws = dict(temp=t, seed=self.cfg.seed, device=device)
+	def sample(
+			self,
+			n: int,
+			t: float = 1.0,
+			device: torch.device = None, ):
+		kws = dict(
+			temp=t,
+			device=device,
+			seed=self.cfg.seed,
+		)
 		z0_sz = [n] + self.z0_sz
 		mu = torch.zeros(z0_sz)
 		logsig = torch.zeros(z0_sz)
@@ -433,9 +435,7 @@ class VAE(Module):
 					kws['padding'] = 0
 				kws['init_scale'] = 1e-2
 				dec_sampler.append(nn.Sequential(
-					nn.ELU(inplace=True),
-					Conv2D(**kws),
-				))
+					nn.ELU(), Conv2D(**kws)))
 			mult /= MULT
 		self.enc_sampler = enc_sampler
 		self.dec_sampler = dec_sampler

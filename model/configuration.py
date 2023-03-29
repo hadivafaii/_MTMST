@@ -93,11 +93,10 @@ class ConfigVAE(_BaseConfig):
 			n_groups_per_scale: int = 4,
 			n_latent_per_group: int = 5,
 			n_cells_per_cond: int = 2,
-			balanced_recon: bool = True,
 			activation_fn: str = 'swish',
-			# sigma_clamp: float = 5.0,
-			scale_init: bool = False,
+			balanced_recon: bool = True,
 			residual_kl: bool = True,
+			scale_init: bool = False,
 			rot_equiv: bool = False,
 			ada_groups: bool = True,
 			spectral_norm: int = 0,
@@ -137,7 +136,6 @@ class ConfigVAE(_BaseConfig):
 		)
 		self.balanced_recon = balanced_recon
 		self.activation_fn = activation_fn
-		# self.sigma_clamp = sigma_clamp
 		self.residual_kl = residual_kl
 		self.scale_init = scale_init
 		self.ada_groups = ada_groups

@@ -69,7 +69,7 @@ def get_skip_connection(
 		raise NotImplementedError(stride)
 
 
-def get_act_fn(fn: str, inplace: bool = False):
+def get_act(fn: str, inplace: bool = False):
 	if fn == 'none':
 		return None
 	elif fn == 'relu':
@@ -113,24 +113,19 @@ class FactorizedReduce(nn.Module):
 
 
 class SELayer(nn.Module):
-	def __init__(
-			self,
-			ci: int,
-			act_fn: str,
-			reduc: int = 16, ):
+	def __init__(self, ci: int, reduc: int = 16):
 		super(SELayer, self).__init__()
 		self.hdim = max(ci // reduc, 4)
-		self.pool = nn.AdaptiveAvgPool2d(1)
 		self.fc = nn.Sequential(
-			nn.Linear(ci, self.hdim), get_act_fn(act_fn),
+			nn.Linear(ci, self.hdim), nn.ReLU(inplace=True),
 			nn.Linear(self.hdim, ci), nn.Sigmoid(),
 		)
 
 	def forward(self, x):
 		b, c, _, _ = x.size()
-		y = self.pool(x).view(b, c)
-		y = self.fc(y).view(b, c, 1, 1)
-		return x * y.expand_as(x)
+		se = torch.mean(x, dim=[2, 3])
+		se = self.fc(se).view(b, c, 1, 1)
+		return x * se
 
 
 class Cell(nn.Module):
@@ -165,7 +160,7 @@ class Cell(nn.Module):
 			)
 			self.ops.append(op)
 		if use_se:
-			self.se = SELayer(co, act_fn)
+			self.se = SELayer(co)
 		else:
 			self.se = None
 
@@ -212,7 +207,7 @@ class ConvLayer(nn.Module):
 			self.bn = nn.BatchNorm2d(ci)
 		else:
 			self.bn = None
-		self.act_fn = get_act_fn(act_fn, False)
+		self.act_fn = get_act(act_fn, False)
 		kwargs = setup_kwargs(defaults, kwargs)
 		self.conv = Conv2D(**kwargs)
 
@@ -492,7 +487,7 @@ def _dims(normalize_dim, ndims):
 	return dims, shape
 
 
-def _normalize(lognorm, weight, shape, dims, eps=1e-12):
+def _normalize(lognorm, weight, shape, dims, eps=1e-8):
 	n = torch.exp(lognorm).view(shape)
 	wn = torch.linalg.vector_norm(
 		x=weight, dim=dims, keepdim=True)
