@@ -243,14 +243,14 @@ class Conv2D(nn.Conv2d):
 		init = torch.ones(self.out_channels)
 		if init_scale is not None:
 			init *= init_scale
-		self.log_weight_norm = nn.Parameter(
+		self.lognorm = nn.Parameter(
 			data=torch.log(init),
 			requires_grad=True,
 		)
-		self.w = self.normalize_weight()
+		self._normalize_weight()
 
 	def forward(self, x):
-		self.w = self.normalize_weight()
+		self._normalize_weight()
 		return F.conv2d(
 			input=x,
 			weight=self.w,
@@ -261,9 +261,9 @@ class Conv2D(nn.Conv2d):
 			groups=self.groups,
 		)
 
-	def normalize_weight(self):
-		return _normalize(
-			lognorm=self.log_weight_norm,
+	def _normalize_weight(self):
+		self.w = _normalize(
+			lognorm=self.lognorm,
 			weight=self.weight,
 			shape=self.shape,
 			dims=self.dims,
@@ -291,14 +291,14 @@ class DeConv2D(nn.ConvTranspose2d):
 		init = torch.ones(self.out_channels)
 		if init_scale is not None:
 			init *= init_scale
-		self.log_weight_norm = nn.Parameter(
+		self.lognorm = nn.Parameter(
 			data=torch.log(init),
 			requires_grad=True,
 		)
-		self.w = self.normalize_weight()
+		self._normalize_weight()
 
 	def forward(self, x, output_size=None):
-		self.w = self.normalize_weight()
+		self._normalize_weight()
 		return F.conv_transpose2d(
 			input=x,
 			weight=self.w,
@@ -309,9 +309,9 @@ class DeConv2D(nn.ConvTranspose2d):
 			groups=self.groups,
 		)
 
-	def normalize_weight(self):
-		return _normalize(
-			lognorm=self.log_weight_norm,
+	def _normalize_weight(self):
+		self.w = _normalize(
+			lognorm=self.lognorm,
 			weight=self.weight,
 			shape=self.shape,
 			dims=self.dims,
@@ -335,23 +335,23 @@ class Linear(nn.Linear):
 		self.dims, self.shape = _dims(normalize_dim, 2)
 		init = torch.linalg.vector_norm(
 			x=self.weight, dim=self.dims)
-		self.log_weight_norm = nn.Parameter(
+		self.lognorm = nn.Parameter(
 			torch.log(init + 1e-2),
 			requires_grad=True,
 		)
-		self.w = self.normalize_weight()
+		self._normalize_weight()
 
 	def forward(self, x):
-		self.w = self.normalize_weight()
+		self._normalize_weight()
 		return F.linear(
 			input=x,
 			weight=self.w,
 			bias=self.bias,
 		)
 
-	def normalize_weight(self):
-		return _normalize(
-			lognorm=self.log_weight_norm,
+	def _normalize_weight(self):
+		self.w = _normalize(
+			lognorm=self.lognorm,
 			weight=self.weight,
 			shape=self.shape,
 			dims=self.dims,
@@ -476,6 +476,20 @@ class AddNorm(object):
 		return fn
 
 
+@torch.jit.script
+def _normalize(
+		lognorm: torch.Tensor,
+		weight: torch.Tensor,
+		shape: List[int],
+		dims: List[int],
+		eps: float = 1e-8, ):
+	n = torch.exp(lognorm).view(shape)
+	wn = torch.sqrt(torch.sum(
+		weight * weight, dim=dims))
+	wn = wn.view(shape)
+	return n * weight / (wn + eps)
+
+
 def _dims(normalize_dim, ndims):
 	assert normalize_dim in [0, 1]
 	dims = list(range(ndims))
@@ -485,10 +499,3 @@ def _dims(normalize_dim, ndims):
 	]
 	dims.pop(normalize_dim)
 	return dims, shape
-
-
-def _normalize(lognorm, weight, shape, dims, eps=1e-8):
-	n = torch.exp(lognorm).view(shape)
-	wn = torch.linalg.vector_norm(
-		x=weight, dim=dims, keepdim=True)
-	return n * weight / (wn + eps)

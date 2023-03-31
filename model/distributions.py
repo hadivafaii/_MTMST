@@ -10,8 +10,8 @@ class Normal:
 			seed: int = None,
 			device: torch.device = None,
 	):
-		self.mu = softclamp(mu, 25)
-		logsig = softclamp(logsig, 5)
+		self.mu = mu
+		logsig = softclamp(logsig, 4)
 		self.sigma = torch.exp(logsig)
 		if temp != 1.0:
 			self.sigma *= temp

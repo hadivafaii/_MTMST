@@ -166,9 +166,7 @@ class VAE(Module):
 			l1 = l1 * w / w.mean()
 			l2 = l2 * w / w.mean()
 			epe = epe * w / w.mean()
-		cos = 1 - self.cos_recon(x, y)
-		cos = torch.sum(cos, dim=[1, 2])
-		return l1, l2, epe, cos
+		return l1, l2, epe
 
 	@staticmethod
 	def loss_kl(q_all, p_all):
@@ -217,7 +215,7 @@ class VAE(Module):
 					# increase the number of iterations for the first time
 					n_iter = 100 * self.cfg.n_power_iter
 
-				for j in range(n_iter):
+				for _ in range(n_iter):
 					# Spectral norm of weight equals to 'u^T W v', where 'u' and 'v'
 					# are the first left and right singular vectors.
 					# This power iteration produces approximations of 'u' and 'v'.
@@ -351,7 +349,7 @@ class VAE(Module):
 		for s in range(self.cfg.n_latent_scales):
 			ch = int(self.n_ch * mult)
 			for g in range(self.cfg.groups[s]):
-				for _ in range(self.cfg.n_cells_per_cond):
+				for _ in range(self.cfg.n_enc_cells):
 					enc.append(Cell(
 						ci=ch,
 						co=ch,
@@ -402,7 +400,7 @@ class VAE(Module):
 		return mult
 
 	def _init_sampler(self, mult):
-		kws = dict(out_channels=2 * self.cfg.n_latent_per_group)
+		kws = dict(out_channels=2*self.cfg.n_latent_per_group)
 		enc_sampler = nn.ModuleList()
 		dec_sampler = nn.ModuleList()
 		expand = nn.ModuleList()
@@ -449,7 +447,7 @@ class VAE(Module):
 			ch = int(self.n_ch * mult)
 			for g in range(self.cfg.groups[self.cfg.n_latent_scales - s - 1]):
 				if not (s == 0 and g == 0):
-					for _ in range(self.cfg.n_cells_per_cond):
+					for _ in range(self.cfg.n_dec_cells):
 						dec.append(Cell(
 							ci=ch,
 							co=ch,
@@ -538,7 +536,7 @@ class VAE(Module):
 					self.all_conv_layers.append(m)
 					if child_name in apply_norm:
 						self.all_log_norm.append(
-							m.log_weight_norm)
+							m.lognorm)
 		self.sr_u, self.sr_v = {}, {}
 		if self.cfg.spectral_norm:
 			fn = AddNorm(
@@ -551,10 +549,10 @@ class VAE(Module):
 		return
 
 	def _init_loss(self):
-		self.cos_recon = nn.CosineSimilarity(dim=1)
 		self.l2_recon = nn.MSELoss(reduction='none')
-		self.l1_recon = nn.SmoothL1Loss(
-			beta=0.1, reduction='none')
+		self.l1_recon = nn.L1Loss(reduction='none')
+		# self.l1_recon = nn.SmoothL1Loss(
+		# 	beta=0.01, reduction='none')
 		self.l1_weight = nn.SmoothL1Loss(
 			beta=0.1, reduction='mean')
 		w_tgt = torch.zeros_like(

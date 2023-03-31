@@ -53,8 +53,8 @@ class TrainerVAE(BaseTrainer):
 			self.wd_coeffs = beta_anneal_linear(
 				n_iters=self.n_iters,
 				beta=self.cfg.lambda_norm,
-				anneal_portion=self.cfg.kl_anneal_portion,
-				constant_portion=self.cfg.kl_const_portion,
+				anneal_portion=2*self.cfg.kl_anneal_portion,
+				constant_portion=100*self.cfg.kl_const_portion,
 				min_beta=self.cfg.lambda_init,
 			)
 		else:
@@ -82,9 +82,9 @@ class TrainerVAE(BaseTrainer):
 			# forward + loss
 			with torch.cuda.amp.autocast(enabled=self.cfg.use_amp):
 				y, _, q, p = self.model(x)
-				l1, l2, epe, cos = self.model.loss_recon(
+				l1, l2, epe = self.model.loss_recon(
 					x=x, y=y, w=1 / norm)
-				loss_recon = l1 + l2 + epe + cos.mul(0.5)
+				loss_recon = l1 + l2 + epe
 				kl_all, kl_diag = self.model.loss_kl(q, p)
 				# balance kl
 				balanced_kl, gamma, kl_vals = kl_balancer(
@@ -112,14 +112,30 @@ class TrainerVAE(BaseTrainer):
 			self.scaler.unscale_(self.optim)
 			# clip grad
 			if self.cfg.grad_clip is not None:
+				nn.utils.clip_grad_value_(
+					parameters=self.model.parameters(),
+					clip_value=self.cfg.grad_clip / 2,
+				)
 				grad_norm = nn.utils.clip_grad_norm_(
 					parameters=self.model.parameters(),
 					max_norm=self.cfg.grad_clip,
 				).item()
+				grads.update(grad_norm)
 				if grad_norm > self.cfg.grad_clip:
 					self.stats['grad'].append(grad_norm)
 					self.stats['loss'].append(loss.item())
-				grads.update(grad_norm)
+			# update average meters & stats
+			msg = ', '.join([
+				f"gstep # {gstep:d}",
+				f"loss: {loss.item():3f}",
+			])
+			self.pbar.set_description(msg)
+			nelbo.update(loss.item())
+			perdim_kl.update(
+				torch.stack(kl_diag).mean().item())
+			perdim_epe.update(
+				epe.mean().item() / self.model.cfg.input_sz**2)
+			self.stats['gamma'].append(to_np(gamma))
 			# step
 			self.scaler.step(self.optim)
 			self.scaler.update()
@@ -131,14 +147,6 @@ class TrainerVAE(BaseTrainer):
 			)
 			if cond_schedule:
 				self.optim_schedule.step()
-			# update average meters & stats
-			nelbo.update(loss.item())
-			perdim_kl.update(
-				torch.stack(kl_diag).mean().item())
-			perdim_epe.update(
-				epe.mean().item() / self.model.cfg.input_sz**2)
-			self.stats['gamma'].append(to_np(gamma))
-
 			# write
 			cond_write = (
 				gstep > 0 and
@@ -171,8 +179,8 @@ class TrainerVAE(BaseTrainer):
 			ratio = total_active / self.model.cfg.total_latents()
 			to_write['kl/total_active_ratio'] = ratio
 			_g = [
-				torch.linalg.norm(p.grad).item()
-				for p in self.model.parameters()
+				p.grad.abs().max().item() for
+				p in self.model.parameters()
 			]
 			to_write['grads/median'] = np.median(_g)
 			to_write['grads/mean'] = np.mean(_g)
@@ -232,7 +240,7 @@ class TrainerVAE(BaseTrainer):
 		model = self.select_model(use_ema)
 
 		x_all, y_all, z_all = [], [], []
-		l1, l2, epe, cos, kl = [], [], [], [], []
+		l1, l2, epe, kl = [], [], [], []
 		for i, (x, norm) in enumerate(dl):
 			if x.device != self.device:
 				x, norm = self.to([x, norm])
@@ -240,32 +248,33 @@ class TrainerVAE(BaseTrainer):
 				y, z, q, p = model(x)
 				z = torch.cat(z, dim=1).squeeze()
 			# data
-			x_all.append(to_np(x))  # TODO: do I really need x here?
+			x_all.append(to_np(x))
 			y_all.append(to_np(y))
 			z_all.append(to_np(z))
 			# loss
 			if loss:
-				_l1, _l2, _epe, _cos = model.loss_recon(
+				_l1, _l2, _epe = model.loss_recon(
 					x=x, y=y, w=1 / norm)
 				l1.append(to_np(_l1))
 				l2.append(to_np(_l2))
 				epe.append(to_np(_epe))
-				cos.append(to_np(_cos))
 				kl_all, _ = model.loss_kl(q, p)
 				kl.append(to_np(sum(kl_all)))
 
 		x, y, z = cat_map([x_all, y_all, z_all])
 		data = {'x': x, 'y': y, 'z': z}
 		if loss:
-			l1, l2, epe, cos, kl = cat_map(
-				[l1, l2, epe, cos, kl])
+			l1, l2, epe, kl = cat_map(
+				[l1, l2, epe, kl])
 			loss = {
 				'kl': kl,
 				'epe': epe,
-				'cos': cos,
 				'l1': l1,
 				'l2': l2,
 			}
+			# cos = F.cosine_similarity(x, y)
+			# cos = torch.sum(cos, dim=[1, 2])
+			# loss['cos'] = 1 - cos
 		return data, loss
 
 	def sample(

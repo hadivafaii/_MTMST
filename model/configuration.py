@@ -1,7 +1,7 @@
 from utils.generic import *
 from utils.process import load_cellinfo
-_OPTIM_CHOICES = ['adamax', 'adam', 'adamw', 'radam', 'sgd']
 _SCHEDULER_CHOICES = ['cosine', 'exponential', 'step', 'cyclic', None]
+_OPTIM_CHOICES = ['adamax', 'adam', 'adamw', 'radam', 'sgd', 'adamax_fast']
 
 
 class _BaseConfig(object):
@@ -83,16 +83,17 @@ class ConfigVAE(_BaseConfig):
 			n_rots: int = 8,
 			ker_sz: int = 4,
 			input_sz: int = 19,
+			n_enc_cells: int = 2,
 			n_enc_nodes: int = 2,
+			n_dec_cells: int = 2,
 			n_dec_nodes: int = 1,
 			n_pre_cells: int = 3,
-			n_pre_blocks: int = 0,
+			n_pre_blocks: int = 1,
 			n_post_cells: int = 3,
 			n_post_blocks: int = 1,
 			n_latent_scales: int = 3,
 			n_groups_per_scale: int = 4,
 			n_latent_per_group: int = 5,
-			n_cells_per_cond: int = 2,
 			activation_fn: str = 'swish',
 			balanced_recon: bool = True,
 			residual_kl: bool = True,
@@ -110,7 +111,9 @@ class ConfigVAE(_BaseConfig):
 		self.n_rots = n_rots
 		self.ker_sz = ker_sz
 		self.input_sz = input_sz
+		self.n_enc_cells = n_enc_cells
 		self.n_enc_nodes = n_enc_nodes
+		self.n_dec_cells = n_dec_cells
 		self.n_dec_nodes = n_dec_nodes
 		self.n_pre_cells = n_pre_cells
 		self.n_pre_blocks = n_pre_blocks
@@ -119,7 +122,6 @@ class ConfigVAE(_BaseConfig):
 		self.n_latent_scales = n_latent_scales
 		self.n_groups_per_scale = n_groups_per_scale
 		self.n_latent_per_group = n_latent_per_group
-		self.n_cells_per_cond = n_cells_per_cond
 		self.spectral_norm = spectral_norm
 		self.rot_equiv = rot_equiv
 		self.compress = compress
@@ -155,19 +157,25 @@ class ConfigVAE(_BaseConfig):
 				f"z-{self.n_latent_per_group}",
 				str(list(reversed(self.groups))),
 			]).replace(' ', ''),
-			# f"clamp-{self.sigma_clamp}",
-			f"cells-{self.n_cells_per_cond}",
+			'-'.join([
+				'x'.join([
+					f"enc({self.n_enc_cells}",
+					f"{self.n_enc_nodes})",
+				]).replace(' ', ''),
+				'x'.join([
+					f"dec({self.n_dec_cells}",
+					f"{self.n_dec_nodes})",
+				]).replace(' ', ''),
+				'x'.join([
+					f"pre({self.n_pre_blocks}",
+					f"{self.n_pre_cells})",
+				]).replace(' ', ''),
+				'x'.join([
+					f"post({self.n_post_blocks}",
+					f"{self.n_post_cells})",
+				]).replace(' ', ''),
+			]),
 		]
-		if self.n_pre_blocks > 0:
-			name.append('x'.join([
-				f"pre-{self.n_pre_blocks}",
-				str(self.n_pre_cells),
-			]).replace(' ', ''))
-		if self.n_post_blocks > 0:
-			name.append('x'.join([
-				f"post-{self.n_post_blocks}",
-				str(self.n_post_cells),
-			]).replace(' ', ''))
 		name = '_'.join(name)
 		if self.spectral_norm:
 			name = f"{name}_sn-{self.spectral_norm}"
@@ -183,15 +191,15 @@ class ConfigVAE(_BaseConfig):
 class ConfigTrain(_BaseConfig):
 	def __init__(
 			self,
-			lr: float = 0.01,
+			lr: float = 0.001,
 			epochs: int = 1000,
-			batch_size: int = 128,
-			warmup_portion: float = 0.01,
-			optimizer: str = 'adamax',
+			batch_size: int = 512,
+			warmup_portion: float = 0.02,
+			optimizer: str = 'adamax_fast',
 			optimizer_kws: dict = None,
 			lambda_anneal: bool = True,
+			lambda_init: float = 1e-7,
 			lambda_norm: float = 1e-3,
-			lambda_init: float = 0,
 			kl_beta: float = 1.0,
 			kl_beta_min: float = 1e-4,
 			kl_anneal_cycles: int = 1,
@@ -214,8 +222,8 @@ class ConfigTrain(_BaseConfig):
 		self.batch_size = batch_size
 		self.warmup_portion = warmup_portion
 		self.lambda_anneal = lambda_anneal
-		self.lambda_norm = lambda_norm
 		self.lambda_init = lambda_init
+		self.lambda_norm = lambda_norm
 		self.kl_beta = kl_beta
 		self.kl_beta_min = kl_beta_min
 		self.kl_balancer = kl_balancer
@@ -247,15 +255,15 @@ class ConfigTrain(_BaseConfig):
 			'-'.join([
 				f"beta({self.kl_beta:0.2g})",
 				'x'.join([
-					f"anneal({self.kl_anneal_cycles}",
+					f"ann({self.kl_anneal_cycles}",
 					f"{self.kl_anneal_portion:0.1f})",
 				]),
 			])
 		]
 		if self.lambda_norm > 0:
-			name.append(f"lambda({self.lambda_norm:0.2g})")
+			name.append(f"lamb({self.lambda_norm:0.2g})")
 		if self.grad_clip is not None:
-			name.append(f"grad({self.grad_clip})")
+			name.append(f"gr({self.grad_clip})")
 		# if self.kl_balancer is not None:
 		# 	name.append(f"bal-{self.kl_balancer}")
 		return '_'.join(name)

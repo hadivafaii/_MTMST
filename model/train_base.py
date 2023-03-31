@@ -21,6 +21,7 @@ class BaseTrainer(object):
 		self.model_ema = None
 		self.ema_rate = None
 		self.n_iters = None
+		self.pbar = None
 
 		self.writer = None
 		self.dl_trn = None
@@ -67,14 +68,14 @@ class BaseTrainer(object):
 		else:
 			raise NotImplementedError
 
-		pbar = tqdm(epochs)
-		for epoch in pbar:
+		self.pbar = tqdm(epochs)
+		for epoch in self.pbar:
 			avg_loss = self.iteration(epoch, **kwargs)
 			msg = ', '.join([
 				f"epoch # {epoch + 1:d}",
 				f"avg loss: {avg_loss:3f}",
 			])
-			pbar.set_description(msg)
+			self.pbar.set_description(msg)
 			if not save:
 				continue
 			if (epoch + 1) % self.cfg.chkpt_freq == 0:
@@ -159,6 +160,9 @@ class BaseTrainer(object):
 		)
 		if self.cfg.optimizer == 'adamax':
 			self.optim = torch.optim.Adamax(**kws)
+		elif self.cfg.optimizer == 'adamax_fast':
+			from .adamax import Adamax
+			self.optim = Adamax(**kws)
 		elif self.cfg.optimizer == 'adam':
 			self.optim = torch.optim.Adam(**kws)
 		elif self.cfg.optimizer == 'adamw':
