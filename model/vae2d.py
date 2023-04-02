@@ -12,7 +12,7 @@ class VAE(Module):
 	def forward(self, x):
 		s = self.stem(x)
 
-		for cell in self.pre:
+		for cell in self.pre_process:
 			s = cell(s)
 
 		# run the main encoder tower
@@ -29,7 +29,8 @@ class VAE(Module):
 		comb_s.reverse()
 
 		idx = 0
-		param0 = self.enc_sampler[idx](self.enc0(s))
+		ftr_enc0 = self.enc0(s)
+		param0 = self.enc_sampler[idx](ftr_enc0)
 		mu_q, logsig_q = torch.chunk(param0, 2, dim=1)
 		dist = Normal(mu_q, logsig_q)  # first approx. posterior
 		z = dist.sample()
@@ -81,7 +82,7 @@ class VAE(Module):
 		if self.vanilla:
 			s = self.stem_decoder(z)
 
-		for cell in self.post:
+		for cell in self.post_process:
 			s = cell(s)
 
 		return self.out(s), latents, q_all, p_all
@@ -130,10 +131,116 @@ class VAE(Module):
 		if self.vanilla:
 			s = self.stem_decoder(z)
 
-		for cell in self.post:
+		for cell in self.post_process:
 			s = cell(s)
 
 		return self.out(s), latents, p_all
+
+	@torch.no_grad()
+	def xtract_ftr(self, x, t: float = 0, full: bool = False):
+		ftr_pre = collections.defaultdict(list)
+		ftr_enc = collections.defaultdict(list)
+		ftr_dec = collections.defaultdict(list)
+		ftr_enc_sampler = collections.defaultdict(list)
+		ftr_dec_sampler = collections.defaultdict(list)
+		kws = dict(
+			temp=t,
+			device=x.device,
+			seed=self.cfg.seed,
+		)
+		# enc
+		s = self.stem(x)
+		for cell in self.pre_process:
+			s = cell(s)
+			ftr_pre[s.size(-1)].append(s)
+		comb_enc, comb_s = [], []
+		for i, cell in enumerate(self.enc_tower):
+			if isinstance(cell, CombinerEnc):
+				comb_enc.append(cell)
+				comb_s.append(s)
+			else:
+				s = cell(s)
+				if full:
+					ftr_enc[s.size(-1)].append(s)
+		comb_enc.reverse()
+		comb_s.reverse()
+
+		idx = 0
+		ftr_enc0 = self.enc0(s)
+		param0 = self.enc_sampler[idx](ftr_enc0)
+		mu_q, logsig_q = torch.chunk(param0, 2, dim=1)
+		dist = Normal(mu_q, logsig_q, **kws)
+		z = dist.sample()
+		q_all = [dist]
+		latents = [z]
+
+		dist = Normal(
+			mu=torch.zeros_like(z),
+			logsig=torch.zeros_like(z),
+			**kws,
+		)
+		p_all = [dist]
+
+		# dec
+		s = self.prior_ftr0.unsqueeze(0)
+		s = s.expand(z.size(0), -1, -1, -1)
+		for cell in self.dec_tower:
+			if isinstance(cell, CombinerDec):
+				if idx > 0:
+					# form prior
+					param = self.dec_sampler[idx - 1](s)
+					if full:
+						d = param.size(-1)
+						ftr_dec_sampler[d].append(param)
+					mu_p, logsig_p = torch.chunk(param, 2, dim=1)
+					dist = Normal(mu_p, logsig_p, **kws)
+					p_all.append(dist)
+
+					# form encoder
+					param = comb_enc[idx - 1](comb_s[idx - 1], s)
+					param = self.enc_sampler[idx](param)
+					if full:
+						d = param.size(-1)
+						ftr_enc_sampler[d].append(param)
+					mu_q, logsig_q = torch.chunk(param, 2, dim=1)
+					if self.cfg.residual_kl:
+						dist = Normal(
+							mu=mu_q + mu_p,
+							logsig=logsig_q + logsig_p,
+							**kws,
+						)
+					else:
+						dist = Normal(
+							mu=mu_q,
+							logsig=logsig_q,
+							**kws,
+						)
+					q_all.append(dist)
+					z = dist.sample()
+					latents.append(z)
+				# 'combiner_dec'
+				s = cell(s, self.expand[idx](z))
+				idx += 1
+			else:
+				s = cell(s)
+				if full:
+					ftr_dec[s.size(-1)].append(s)
+
+		if self.vanilla:
+			s = self.stem_decoder(z)
+			if full:
+				ftr_dec[s.size(-1)].append(s)
+		for cell in self.post_process:
+			s = cell(s)
+		ftr = {
+			'enc0': ftr_enc0,
+			'pre': dict(ftr_pre),
+			'enc': dict(ftr_enc),
+			'dec': dict(ftr_dec),
+			'enc_sampler': dict(ftr_enc_sampler),
+			'dec_sampler': dict(ftr_dec_sampler),
+		}
+		return self.out(s), latents, q_all, p_all, ftr
 
 	def latent_scales(self):
 		scales = itertools.chain.from_iterable([
@@ -154,19 +261,13 @@ class VAE(Module):
 		return scales, lvl_ids
 
 	def loss_recon(self, x, y, w=None):
-		l1 = self.l1_recon(x, y)
-		l2 = self.l2_recon(x, y)
-		l1 = torch.sum(l1, dim=[1, 2, 3])
-		l2 = torch.sum(l2, dim=[1, 2, 3])
 		epe = endpoint_error(x, y)
 		if self.cfg.balanced_recon:
 			if w is None:
 				w = torch.sum(torch.linalg.norm(
 					x, dim=1), dim=[1, 2]).pow(-1)
-			l1 = l1 * w / w.mean()
-			l2 = l2 * w / w.mean()
 			epe = epe * w / w.mean()
-		return l1, l2, epe
+		return epe
 
 	@staticmethod
 	def loss_kl(q_all, p_all):
@@ -243,6 +344,7 @@ class VAE(Module):
 			act_fn=self.cfg.activation_fn,
 			use_bn=self.cfg.use_bn,
 			use_se=self.cfg.use_se,
+			scale=1.0,
 		)
 		self._init_stem()
 		self._init_sizes()
@@ -253,6 +355,7 @@ class VAE(Module):
 			self.enc_tower = []
 		mult = self._init_enc0(mult)
 		self._init_sampler(mult)
+		self.kws['scale'] = 1.0
 		if not self.vanilla:
 			mult = self._init_dec(mult)
 			self.stem_decoder = None
@@ -317,14 +420,14 @@ class VAE(Module):
 		)
 		for _, c in looper:
 			ch = int(self.n_ch * mult)
+			if self.cfg.scale_init:
+				self.kws['scale'] = 1 / np.sqrt(depth)
 			if c == self.cfg.n_pre_cells - 1:
 				co = MULT * ch
 				cell = Cell(
 					ci=ch,
 					co=co,
 					n_nodes=self.cfg.n_enc_nodes,
-					scale=1 / np.sqrt(depth) if
-					self.cfg.scale_init else None,
 					cell_type='down_pre',
 					**self.kws,
 				)
@@ -334,14 +437,12 @@ class VAE(Module):
 					ci=ch,
 					co=ch,
 					n_nodes=self.cfg.n_enc_nodes,
-					scale=1 / np.sqrt(depth) if
-					self.cfg.scale_init else None,
 					cell_type='normal_pre',
 					**self.kws,
 				)
 			pre.append(cell)
 			depth += 1
-		self.pre = pre
+		self.pre_process = pre
 		return mult, depth
 
 	def _init_enc(self, mult, depth):
@@ -350,12 +451,12 @@ class VAE(Module):
 			ch = int(self.n_ch * mult)
 			for g in range(self.cfg.groups[s]):
 				for _ in range(self.cfg.n_enc_cells):
+					if self.cfg.scale_init:
+						self.kws['scale'] = 1 / np.sqrt(depth)
 					enc.append(Cell(
 						ci=ch,
 						co=ch,
 						n_nodes=self.cfg.n_enc_nodes,
-						scale=1 / np.sqrt(depth) if
-						self.cfg.scale_init else None,
 						cell_type='normal_pre',
 						**self.kws,
 					))
@@ -370,12 +471,12 @@ class VAE(Module):
 
 			# down cells after finishing a scale
 			if s < self.cfg.n_latent_scales - 1:
+				if self.cfg.scale_init:
+					self.kws['scale'] = 1 / np.sqrt(depth)
 				cell = Cell(
 					ci=ch,
 					co=ch * MULT,
 					n_nodes=self.cfg.n_enc_nodes,
-					scale=1 / np.sqrt(depth) if
-					self.cfg.scale_init else None,
 					cell_type='down_enc',
 					**self.kws,
 				)
@@ -400,14 +501,18 @@ class VAE(Module):
 		return mult
 
 	def _init_sampler(self, mult):
-		kws = dict(out_channels=2*self.cfg.n_latent_per_group)
+		kws = dict(
+			compress=self.cfg.compress,
+			separable=self.cfg.separable,
+			latent_dim=self.cfg.n_latent_per_group,
+		)
+		expand = nn.ModuleList()
 		enc_sampler = nn.ModuleList()
 		dec_sampler = nn.ModuleList()
-		expand = nn.ModuleList()
 		for s in range(self.cfg.n_latent_scales):
 			s_inv = self.cfg.n_latent_scales - s - 1
-			ch = int(self.n_ch * mult)
-			kws['in_channels'] = ch
+			kws['spatial_dim'] = self.scales[s_inv]
+			kws['in_channels'] = int(self.n_ch * mult)
 			for g in range(self.cfg.groups[s_inv]):
 				if self.cfg.compress:
 					expand.append(DeConv2D(
@@ -416,25 +521,18 @@ class VAE(Module):
 						kernel_size=self.scales[s_inv],
 						normalize_dim=1,
 					))
-					kws['kernel_size'] = self.scales[s_inv]
-					kws['padding'] = 0
 				else:
 					expand.append(nn.Identity())
-					kws['kernel_size'] = 3
-					kws['padding'] = 1
-				kws['init_scale'] = 0.5
-				enc_sampler.append(Conv2D(**kws))
+				# enc sampler
+				kws['act_fn'] = 'none'
+				kws['init_scale'] = 0.7
+				enc_sampler.append(Sampler(**kws))
+				# dec sampler
 				if s == 0 and g == 0:
 					continue  # 1st group: we used a fixed standard Normal
-				if self.cfg.compress:
-					kws['kernel_size'] = self.scales[s_inv]
-					kws['padding'] = 0
-				else:
-					kws['kernel_size'] = 1
-					kws['padding'] = 0
+				kws['act_fn'] = 'elu'
 				kws['init_scale'] = 1e-2
-				dec_sampler.append(nn.Sequential(
-					nn.ELU(), Conv2D(**kws)))
+				dec_sampler.append(Sampler(**kws))
 			mult /= MULT
 		self.enc_sampler = enc_sampler
 		self.dec_sampler = dec_sampler
@@ -453,7 +551,6 @@ class VAE(Module):
 							co=ch,
 							n_nodes=self.cfg.n_dec_nodes,
 							cell_type='normal_dec',
-							scale=None,
 							**self.kws,
 						))
 				dec.append(CombinerDec(
@@ -468,7 +565,6 @@ class VAE(Module):
 					co=int(ch / MULT),
 					n_nodes=self.cfg.n_dec_nodes,
 					cell_type='up_dec',
-					scale=None,
 					**self.kws,
 				))
 				mult /= MULT
@@ -494,7 +590,6 @@ class VAE(Module):
 					co=co,
 					n_nodes=self.cfg.n_dec_nodes,
 					cell_type='up_post',
-					scale=None,
 					**self.kws,
 				)
 				mult /= MULT
@@ -504,7 +599,6 @@ class VAE(Module):
 					co=ch,
 					n_nodes=self.cfg.n_dec_nodes,
 					cell_type='normal_post',
-					scale=None,
 					**self.kws,
 				)
 			post.append(cell)
@@ -512,7 +606,7 @@ class VAE(Module):
 				post.append(upsample)
 		if not len(post):
 			post.append(upsample)
-		self.post = post
+		self.post_process = post
 		return mult
 
 	def _init_output(self, mult):
@@ -527,16 +621,18 @@ class VAE(Module):
 
 	def _init_norm(self, apply_norm: List[str] = None):
 		apply_norm = apply_norm if apply_norm else [
-			'stem', 'pre', 'enc_tower', 'enc0', 'expand', 'dec_tower']
+			'stem', 'pre_process',
+			'enc0', 'enc_tower', 'dec_tower',
+			'enc_sampler', 'dec_sampler', 'expand',
+		]
 		self.all_log_norm = []
 		self.all_conv_layers = []
 		for child_name, child in self.named_children():
 			for m in child.modules():
 				if isinstance(m, (Conv2D, DeConv2D)):
 					self.all_conv_layers.append(m)
-					if child_name in apply_norm:
-						self.all_log_norm.append(
-							m.lognorm)
+					if child_name in apply_norm and m.apply_norm:
+						self.all_log_norm.append(m.lognorm)
 		self.sr_u, self.sr_v = {}, {}
 		if self.cfg.spectral_norm:
 			fn = AddNorm(
@@ -549,16 +645,64 @@ class VAE(Module):
 		return
 
 	def _init_loss(self):
-		self.l2_recon = nn.MSELoss(reduction='none')
-		self.l1_recon = nn.L1Loss(reduction='none')
-		# self.l1_recon = nn.SmoothL1Loss(
-		# 	beta=0.01, reduction='none')
 		self.l1_weight = nn.SmoothL1Loss(
 			beta=0.1, reduction='mean')
 		w_tgt = torch.zeros_like(
 			torch.cat(self.all_log_norm))
 		self.register_buffer('w_tgt', w_tgt)
 		return
+
+
+class Sampler(nn.Module):
+	def __init__(
+			self,
+			in_channels: int,
+			latent_dim: int,
+			spatial_dim: int,
+			act_fn: str = 'none',
+			compress: bool = True,
+			separable: bool = False,
+			bias: bool = True,
+			**kwargs,
+	):
+		super(Sampler, self).__init__()
+		kws = dict(
+			in_channels=in_channels,
+			out_channels=latent_dim * 2,
+			apply_norm=False,
+			init_scale=1.0,
+			bias=bias,
+		)
+		if compress:
+			kws['kernel_size'] = spatial_dim
+			kws['padding'] = 0
+		else:
+			kws['kernel_size'] = 3
+			kws['padding'] = 1
+		kwargs = setup_kwargs(kws, kwargs)
+
+		if separable:
+			depthwise = Conv2D(
+				in_channels=in_channels,
+				out_channels=in_channels,
+				kernel_size=spatial_dim,
+				groups=in_channels,
+				apply_norm=True,
+				bias=bias,
+			)
+			kwargs['kernel_size'] = 1
+			pointwise = Conv2D(**kwargs)
+			self.conv = nn.Sequential(
+				depthwise, pointwise)
+		else:
+			self.conv = Conv2D(**kwargs)
+		self.act = get_act(act_fn)
+
+	def forward(self, x):
+		if self.act is not None:
+			x = self.act(x)
+		x = self.conv(x)
+		return x
 
 
 class CombinerEnc(nn.Module):

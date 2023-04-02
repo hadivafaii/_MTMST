@@ -63,8 +63,9 @@ class TrainerVAE(BaseTrainer):
 
 	def iteration(self, epoch: int = 0, **kwargs):
 		self.model.train()
-		grads = AvgrageMeter()
 		nelbo = AvgrageMeter()
+		grads = AvgrageMeter()
+		gradmax = AvgrageMeter()
 		perdim_kl = AvgrageMeter()
 		perdim_epe = AvgrageMeter()
 		for i, (x, norm) in enumerate(self.dl_trn):
@@ -82,9 +83,7 @@ class TrainerVAE(BaseTrainer):
 			# forward + loss
 			with torch.cuda.amp.autocast(enabled=self.cfg.use_amp):
 				y, _, q, p = self.model(x)
-				l1, l2, epe = self.model.loss_recon(
-					x=x, y=y, w=1 / norm)
-				loss_recon = l1 + l2 + epe
+				epe = self.model.loss_recon(x=x, y=y, w=1/norm)
 				kl_all, kl_diag = self.model.loss_kl(q, p)
 				# balance kl
 				balanced_kl, gamma, kl_vals = kl_balancer(
@@ -93,7 +92,7 @@ class TrainerVAE(BaseTrainer):
 					coeff=self.betas[gstep],
 					beta=self.cfg.kl_beta,
 				)
-				loss = torch.mean(loss_recon + balanced_kl)
+				loss = torch.mean(epe + balanced_kl)
 				# add regularization
 				loss_w = self.model.loss_weight()
 				if self.wd_coeffs[gstep] > 0:
@@ -112,10 +111,10 @@ class TrainerVAE(BaseTrainer):
 			self.scaler.unscale_(self.optim)
 			# clip grad
 			if self.cfg.grad_clip is not None:
-				nn.utils.clip_grad_value_(
-					parameters=self.model.parameters(),
-					clip_value=self.cfg.grad_clip / 2,
-				)
+				# nn.utils.clip_grad_value_(
+				# 	parameters=self.model.parameters(),
+				# 	clip_value=self.cfg.grad_clip / 2,
+				# )
 				grad_norm = nn.utils.clip_grad_norm_(
 					parameters=self.model.parameters(),
 					max_norm=self.cfg.grad_clip,
@@ -125,17 +124,21 @@ class TrainerVAE(BaseTrainer):
 					self.stats['grad'].append(grad_norm)
 					self.stats['loss'].append(loss.item())
 			# update average meters & stats
-			msg = ', '.join([
-				f"gstep # {gstep:d}",
-				f"loss: {loss.item():3f}",
-			])
-			self.pbar.set_description(msg)
+			gradmax.update(np.max([
+				p.grad.abs().max().item() for
+				p in self.model.parameters()
+			]))
 			nelbo.update(loss.item())
 			perdim_kl.update(
 				torch.stack(kl_diag).mean().item())
 			perdim_epe.update(
 				epe.mean().item() / self.model.cfg.input_sz**2)
 			self.stats['gamma'].append(to_np(gamma))
+			self.pbar.set_description(', '.join([
+				f"gstep # {gstep:.3g}",
+				f"nelbo: {nelbo.avg:0.3f}",
+				f"grad: {grads.avg:0.1f}",
+			]))
 			# step
 			self.scaler.step(self.optim)
 			self.scaler.update()
@@ -160,11 +163,13 @@ class TrainerVAE(BaseTrainer):
 				'train/reg_coeff': self.wd_coeffs[gstep],
 				'train/lr': self.optim.param_groups[0]['lr'],
 				'train/loss_kl': torch.mean(sum(kl_all)).item(),
-				'train/loss_recon': torch.mean(loss_recon).item(),
+				'train/loss_epe': torch.mean(epe).item(),
 				'train/nelbo_avg': nelbo.avg,
 				'train/perdim_kl': perdim_kl.avg,
 				'train/perdim_epe': perdim_epe.avg,
 				'train/reg_weight': loss_w.item(),
+				'grads/max': gradmax.val,
+				'grads/norm': grads.avg,
 			}
 			if cond_reg_spectral:
 				to_write['train/reg_spectral'] = loss_sr.item()
@@ -178,14 +183,6 @@ class TrainerVAE(BaseTrainer):
 			to_write['kl/total_active'] = total_active
 			ratio = total_active / self.model.cfg.total_latents()
 			to_write['kl/total_active_ratio'] = ratio
-			_g = [
-				p.grad.abs().max().item() for
-				p in self.model.parameters()
-			]
-			to_write['grads/median'] = np.median(_g)
-			to_write['grads/mean'] = np.mean(_g)
-			to_write['grads/max'] = np.max(_g)
-			to_write['grads/norm'] = grads.avg
 			for k, v in to_write.items():
 				self.writer.add_scalar(k, v, gstep)
 
@@ -231,7 +228,7 @@ class TrainerVAE(BaseTrainer):
 	def forward(
 			self,
 			dl: str,
-			loss: bool = True,
+			freeze: bool = False,
 			use_ema: bool = False, ):
 		assert dl in ['trn', 'vld', 'tst']
 		dl = getattr(self, f"dl_{dl}")
@@ -239,42 +236,29 @@ class TrainerVAE(BaseTrainer):
 			return
 		model = self.select_model(use_ema)
 
+		epe, kl = [], []
 		x_all, y_all, z_all = [], [], []
-		l1, l2, epe, kl = [], [], [], []
 		for i, (x, norm) in enumerate(dl):
 			if x.device != self.device:
 				x, norm = self.to([x, norm])
-			with torch.no_grad():
-				y, z, q, p = model(x)
-				z = torch.cat(z, dim=1).squeeze()
+			y, z, q, p, *_ = model.xtract_ftr(
+				x=x, t=0.0 if freeze else 1.0)
+			z = torch.cat(z, dim=1).squeeze()
 			# data
-			x_all.append(to_np(x))
-			y_all.append(to_np(y))
+			if dl == 'trn':
+				x_all.append(to_np(x))
+				y_all.append(to_np(y))
 			z_all.append(to_np(z))
 			# loss
-			if loss:
-				_l1, _l2, _epe = model.loss_recon(
-					x=x, y=y, w=1 / norm)
-				l1.append(to_np(_l1))
-				l2.append(to_np(_l2))
-				epe.append(to_np(_epe))
-				kl_all, _ = model.loss_kl(q, p)
-				kl.append(to_np(sum(kl_all)))
+			epe.append(to_np(model.loss_recon(
+				x=x, y=y, w=1 / norm)))
+			kl_all, _ = model.loss_kl(q, p)
+			kl.append(to_np(sum(kl_all)))
 
-		x, y, z = cat_map([x_all, y_all, z_all])
+		x, y, z, epe, kl = cat_map(
+			[x_all, y_all, z_all, epe, kl])
 		data = {'x': x, 'y': y, 'z': z}
-		if loss:
-			l1, l2, epe, kl = cat_map(
-				[l1, l2, epe, kl])
-			loss = {
-				'kl': kl,
-				'epe': epe,
-				'l1': l1,
-				'l2': l2,
-			}
-			# cos = F.cosine_similarity(x, y)
-			# cos = torch.sum(cos, dim=[1, 2])
-			# loss['cos'] = 1 - cos
+		loss = {'epe': epe, 'kl': kl}
 		return data, loss
 
 	def sample(
@@ -300,19 +284,23 @@ class TrainerVAE(BaseTrainer):
 		x_sample, z_sample = cat_map([x_sample, z_sample])
 		return x_sample, z_sample
 
-	def regress(
-			self,
-			n_fwd: int = 10,
-			use_ema: bool = False, ):
-		z_vld, z_tst = [], []
-		for _ in range(n_fwd):
-			zv = self.forward('vld', False, use_ema)[0]['z']
-			zt = self.forward('tst', False, use_ema)[0]['z']
-			z_vld.append(np.expand_dims(zv, 0))
-			z_tst.append(np.expand_dims(zt, 0))
-		z_vld, z_tst = cat_map([z_vld, z_tst])
-		z_vld = z_vld.mean(0)
-		z_tst = z_tst.mean(0)
+	def regress(self, n_fwd: int = 0, use_ema: bool = False):
+		assert n_fwd >= 0
+		if n_fwd == 0:
+			kws = dict(freeze=True, use_ema=use_ema)
+			z_vld = self.forward('vld', **kws)[0]['z']
+			z_tst = self.forward('tst', **kws)[0]['z']
+		else:
+			z_vld, z_tst = [], []
+			kws = dict(freeze=False, use_ema=use_ema)
+			for _ in range(n_fwd):
+				zv = self.forward('vld', **kws)[0]['z']
+				zt = self.forward('tst', **kws)[0]['z']
+				z_vld.append(np.expand_dims(zv, 0))
+				z_tst.append(np.expand_dims(zt, 0))
+			z_vld, z_tst = cat_map([z_vld, z_tst])
+			z_vld = z_vld.mean(0)
+			z_tst = z_tst.mean(0)
 		g_vld = self.dl_vld.dataset.factors
 		g_tst = self.dl_tst.dataset.factors
 		mi, r, lr = regress(z_vld, g_vld, z_tst, g_tst)
@@ -369,10 +357,14 @@ class TrainerVAE(BaseTrainer):
 		figs['fig/regression'] = fig
 
 		# mutual info
+		title = '_'.join(self.model.cfg.name().split('_')[:2])
+		mi_max = np.round(np.max(regr['regr/mi'], axis=1), 2)
+		mi_max = ', '.join([str(e) for e in mi_max])
+		title = f"model = {title};    max MI (row) = {mi_max}"
 		fig, _ = show_heatmap(
 			r=regr['regr/mi'],
 			yticklabels=_ty,
-			title=f"{self.model.cfg.name()}",
+			title=title,
 			tick_labelsize_x=10,
 			tick_labelsize_y=7,
 			title_fontsize=14,
@@ -381,8 +373,9 @@ class TrainerVAE(BaseTrainer):
 			vmax=0.65,
 			cmap='rocket',
 			linecolor='dimgrey',
-			cbar_kws={'pad': 0.002, 'shrink': 0.5},
-			figsize=(20, 2.5),
+			cbar=False,
+			# cbar_kws={'pad': 0.002, 'shrink': 0.5},
+			figsize=(20, 5),
 			annot=False,
 			display=False,
 		)

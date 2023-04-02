@@ -10,6 +10,7 @@ class _BaseConfig(object):
 			name: str = 'Base',
 			seed: int = 0,
 			full: bool = False,
+			save: bool = False,
 			h_file: str = 'MTLFP_tres25',
 			h_pre: str = 'simulation_dim-19_5e+04',
 			base_dir: str = 'Documents/MTMST',
@@ -24,10 +25,11 @@ class _BaseConfig(object):
 			self.h_file = pjoin(self.data_dir, f"{h_file}.h5")
 			self.h_pre = pjoin(self.data_dir, f"{h_pre}.h5")
 			self._mkdirs()
-			self.save()
-			# self._load_cellinfo()
+			self._load_cellinfo()
 			self.seed = seed
 			self.set_seed()
+		if save:
+			self.save()
 
 	def get_all_dirs(self):
 		dirs = {k: getattr(self, k) for k in dir(self) if '_dir' in k}
@@ -101,6 +103,7 @@ class ConfigVAE(_BaseConfig):
 			rot_equiv: bool = False,
 			ada_groups: bool = True,
 			spectral_norm: int = 0,
+			separable: bool = False,
 			compress: bool = True,
 			use_bn: bool = False,
 			use_se: bool = True,
@@ -124,6 +127,7 @@ class ConfigVAE(_BaseConfig):
 		self.n_latent_per_group = n_latent_per_group
 		self.spectral_norm = spectral_norm
 		self.rot_equiv = rot_equiv
+		self.separable = separable
 		self.compress = compress
 		self.use_bn = use_bn
 		self.groups = groups_per_scale(
@@ -181,8 +185,10 @@ class ConfigVAE(_BaseConfig):
 			name = f"{name}_sn-{self.spectral_norm}"
 		if self.rot_equiv:
 			name = f"{name}_rot"
+		if self.separable:
+			name = f"{name}_sep"
 		if not self.compress:
-			name = f"{name}_notcmprs"
+			name = f"{name}_noncmprs"
 		if self.use_bn:
 			name = f"{name}_bn"
 		return name
@@ -214,9 +220,10 @@ class ConfigTrain(_BaseConfig):
 			use_amp: bool = False,
 			chkpt_freq: int = 50,
 			eval_freq: int = 5,
-			log_freq: int = 30,
+			log_freq: int = 20,
 	):
-		super(ConfigTrain, self).__init__(full=False)
+		super(ConfigTrain, self).__init__(
+			full=False, save=False)
 		self.lr = lr
 		self.epochs = epochs
 		self.batch_size = batch_size
@@ -253,19 +260,15 @@ class ConfigTrain(_BaseConfig):
 				f"b{self.batch_size}",
 				f"lr({self.lr:0.2g})"]),
 			'-'.join([
-				f"beta({self.kl_beta:0.2g})",
-				'x'.join([
-					f"ann({self.kl_anneal_cycles}",
-					f"{self.kl_anneal_portion:0.1f})",
-				]),
+				f"beta({self.kl_beta:0.2g}"
+				f":{self.kl_anneal_cycles}"
+				f"x{self.kl_anneal_portion:0.1f})",
 			])
 		]
 		if self.lambda_norm > 0:
 			name.append(f"lamb({self.lambda_norm:0.2g})")
 		if self.grad_clip is not None:
 			name.append(f"gr({self.grad_clip})")
-		# if self.kl_balancer is not None:
-		# 	name.append(f"bal-{self.kl_balancer}")
 		return '_'.join(name)
 
 	def _set_optim_kws(self, kws):

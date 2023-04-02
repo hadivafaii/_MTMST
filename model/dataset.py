@@ -1,4 +1,5 @@
 from .utils_model import *
+from analysis.opticflow import HyperFlow
 from torch.utils.data.dataset import Dataset
 
 
@@ -70,10 +71,16 @@ class ROFL(Dataset):
 
 def setup_repeat_data(
 		group: h5py.Group,
-		lags: int,
-		stim: str = 'stimR', ):
+		lags: int = 24,
+		hf_kws: dict = None,
+		use_hf: bool = True, ):
 	if 'repeats' not in group:
-		return None, None
+		return None, None, None
+	hf_kws = hf_kws if hf_kws else {
+		'size': 32,
+		'sres': 1,
+		'radius': 6,
+	}
 	group = group['repeats']
 	psth = np.array(group['psth_raw_all'], dtype=float)
 	badspks = np.array(group['fix_lost_all'], dtype=bool)
@@ -83,7 +90,15 @@ def setup_repeat_data(
 	nc, _, length = psth.shape
 
 	# stim
-	stim = np.array(group[stim], dtype=float)
+	if use_hf:
+		hf = HyperFlow(
+			params=np.array(group['hyperflowR'])[:, 2:],
+			center=np.array(group['hyperflowR'])[:, :2],
+			**hf_kws,
+		)
+		stim = hf.compute_hyperflow()
+	else:
+		stim = np.array(group['stimR'], dtype=float)
 	intvl = range(tstart[1], tstart[1] + length)
 	src = time_embed(stim, lags, intvl)
 	# spks

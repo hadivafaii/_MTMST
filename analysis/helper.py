@@ -1,4 +1,5 @@
 from utils.plotting import *
+from sklearn import linear_model
 from sklearn.metrics import r2_score
 from sklearn.model_selection import KFold
 
@@ -26,8 +27,8 @@ def poisson_ll(
 		true: np.ndarray,
 		pred: np.ndarray,
 		axis: int = 0,
-		normalize: bool = True, ):
-	eps = 1e-5
+		normalize: bool = True,
+		eps: float = 1e-8, ):
 	ll = np.sum(true * np.log(pred + eps) - pred, axis=axis)
 	if normalize:
 		ll /= np.maximum(eps, np.sum(true, axis=axis))

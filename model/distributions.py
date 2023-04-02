@@ -11,9 +11,10 @@ class Normal:
 			device: torch.device = None,
 	):
 		self.mu = mu
-		logsig = softclamp(logsig, 4)
+		logsig = softclamp(logsig, 5)
 		self.sigma = torch.exp(logsig)
 		if temp != 1.0:
+			assert temp >= 0
 			self.sigma *= temp
 		if seed is not None:
 			self.rng = torch.Generator(device)

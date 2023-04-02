@@ -4,8 +4,8 @@ _CHOICES = ['obj', 'transl', 'terrain', 'fixate', 'pursuit']
 _Obj = collections.namedtuple(
 	typename='Object',
 	field_names=[
-		'pos', 'v',	   # coordinate system: real
-		'alpha', 'r',  # coordinate system: self
+		'pos', 'v',			# coordinate system: real
+		'alpha', 'r',		# coordinate system: self
 		'size'],
 )
 
@@ -16,8 +16,8 @@ class OpticFlow(object):
 			category: str,
 			n: int = 1,
 			n_obj: int = 1,
-			fov: float = 45,
-			res: float = 1.0,
+			dim: int = 19,
+			fov: float = 45.0,
 			obj_r: float = 0.2,
 			obj_bound: float = 0.97,
 			obj_zlim: Tuple[float, float] = (0.5, 1.0),
@@ -33,6 +33,7 @@ class OpticFlow(object):
 			f"allowed categories:\n{_CHOICES}"
 		assert isinstance(n, int) and n > 0
 		assert isinstance(n_obj, int) and n_obj >= 0
+		assert isinstance(dim, int) and dim % 2 == 1
 		assert isinstance(z_bg, float) and z_bg > 0
 		if category in ['obj', 'terrain', 'pursuit']:
 			assert n_obj > 0
@@ -43,8 +44,8 @@ class OpticFlow(object):
 		self.category = category
 		self.n = n
 		self.n_obj = n_obj
+		self.dim = dim
 		self.fov = fov
-		self.res = res
 		self.z_bg = z_bg
 		self.obj_r = obj_r
 		self.obj_zlim = obj_zlim
@@ -60,6 +61,70 @@ class OpticFlow(object):
 		self.z_env = None
 		self.v_slf = None
 		self.objects = {}
+
+	def groundtruth_factors(self):
+		factors = {
+			'fix_x': self.fix[:, 0],
+			'fix_y': self.fix[:, 1],
+			'slf_v_x': self.v_slf[:, 0],
+			'slf_v_y': self.v_slf[:, 1],
+			'slf_v_z': self.v_slf[:, 2],
+		}
+		v_slf_polar = cart2polar(self.v_slf)
+		factors_aux = {
+			'slf_v_mag': v_slf_polar[:, 0],
+			'slf_v_theta': v_slf_polar[:, 1],
+			'slf_v_phi': v_slf_polar[:, 2],
+		}
+		for i, obj in self.objects.items():
+			factors = {
+				**factors,
+				f'obj{i}_alpha_x': obj.alpha[:, 0],
+				f'obj{i}_alpha_y': obj.alpha[:, 1],
+				f'obj{i}_dist': obj.r[:, 0],
+				f'obj{i}_v_x': obj.v[:, 0],
+				f'obj{i}_v_y': obj.v[:, 1],
+				f'obj{i}_v_z': obj.v[:, 2],
+			}
+			delta_x = obj.pos - self.fix
+			delta_v = obj.v - self.v_slf
+			dv_polar = cart2polar(delta_v)
+			v_obj_polar = cart2polar(obj.v)
+			factors_aux = {
+				**factors_aux,
+				'obj0_size': obj.size,
+				'obj0_theta': obj.r[:, 1],
+				'obj0_phi': obj.r[:, 2],
+
+				'obj0_x': obj.pos[:, 0],
+				'obj0_y': obj.pos[:, 1],
+				'obj0_z': obj.pos[:, 2],
+
+				'obj0_dx': delta_x[:, 0],
+				'obj0_dy': delta_x[:, 1],
+				'obj0_dz': delta_x[:, 2],
+
+				'obj0_v_mag': v_obj_polar[:, 0],
+				'obj0_v_theta': v_obj_polar[:, 1],
+				'obj0_v_phi': v_obj_polar[:, 2],
+
+				'obj0_dv_x': delta_v[:, 0],
+				'obj0_dv_y': delta_v[:, 1],
+				'obj0_dv_z': delta_v[:, 2],
+
+				'obj0_dv_mag': dv_polar[:, 0],
+				'obj0_dv_theta': dv_polar[:, 1],
+				'obj0_dv_phi': dv_polar[:, 2],
+			}
+		f, f_aux = map(
+			lambda d: list(d.keys()),
+			[factors, factors_aux],
+		)
+		g, g_aux = map(
+			lambda d: np.stack(list(d.values())),
+			[factors, factors_aux],
+		)
+		return f, g, f_aux, g_aux
 
 	def filter(self, min_obj_size: int):
 		if self.n_obj == 0:
@@ -357,9 +422,7 @@ class OpticFlow(object):
 		return
 
 	def _init_span(self):
-		dim = self.fov / self.res
-		assert dim.is_integer()
-		self.dim = 2 * int(dim) + 1
+		self.res = 2 * self.fov / (self.dim - 1)
 		self.span = np.deg2rad(np.linspace(
 			-self.fov, self.fov, self.dim))
 		return
@@ -711,27 +774,38 @@ class OpticFlowVecOLD(object):
 class HyperFlow(Obj):
 	def __init__(
 			self,
-			opticflow: np.ndarray,
+			params: np.ndarray,
 			center: np.ndarray,
-			size: int = 32,
-			sres: float = 1,
-			radius: float = 8,
+			size: Tuple[int, int],
+			sres: float = 1.0,
+			radius: float = 8.0,
+			bound: float = 2.0,
 			**kwargs,
 	):
 		super(HyperFlow, self).__init__(**kwargs)
-		assert len(opticflow) == len(center)
-		assert opticflow.shape[1] == 6
+		assert len(params) == len(center)
+		assert params.shape[1] == 6
 		assert center.shape[1] == 2
-		self.opticflow = opticflow
+		if not isinstance(size, Iterable):
+			size = (size, size)
+		assert len(size) == 2
+		self.params = params
 		self.center = center
 		self.size = size
 		self.sres = sres
 		self.radius = radius
+		self.bound = bound
 		self.stim = None
 
 	def compute_hyperflow(self):
-		self.stim = self._compute_hyperflow().reshape(
-			(-1,) + (self.size//self.sres,) * 2 + (2,))
+		dim = tuple(
+			e // self.sres for
+			e in self.size
+		)
+		shape = (-1, ) + dim + (2, )
+		stim = self._hf().reshape(shape)
+		stim /= np.max(np.abs(stim))
+		self.stim = self.bound * stim
 		return self.stim
 
 	def show_psd(
@@ -788,19 +862,25 @@ class HyperFlow(Obj):
 		plt.show()
 		return f, px
 
-	def _compute_hyperflow(self):
-		if not isinstance(self.size, Iterable):
-			self.size = (self.size,) * 2
+	def _hf(self):
 		xl, yl = self.size
 		xl = int(np.round(xl / self.sres))
 		yl = int(np.round(yl / self.sres))
 
-		xi0 = np.linspace(- xl / 2 + 0.5, xl / 2 - 0.5, xl) * self.sres
-		yi0 = np.linspace(- yl / 2 + 0.5, yl / 2 - 0.5, yl) * self.sres
+		xi0 = np.linspace(
+			start=-xl / 2 + 0.5,
+			stop=xl / 2 - 0.5,
+			num=xl,
+		) * self.sres
+		yi0 = np.linspace(
+			start=-yl / 2 + 0.5,
+			stop=yl / 2 - 0.5,
+			num=yl,
+		) * self.sres
 		xi0, yi0 = np.meshgrid(xi0, yi0)
 
-		stim = np.zeros((len(self.opticflow), xl * yl * 2))
-		for t in range(len(self.opticflow)):
+		stim = np.zeros((len(self.params), xl * yl * 2))
+		for t in range(len(self.params)):
 			xi = xi0 - self.center[t, 0]
 			yi = yi0 - self.center[t, 1]
 			mask = xi ** 2 + yi ** 2 <= self.radius ** 2
@@ -829,7 +909,7 @@ class HyperFlow(Obj):
 				a=raw,
 				newshape=(-1, raw.shape[-1]),
 				order='C',
-			) @ self.opticflow[t]
+			) @ self.params[t]
 
 		return stim
 
@@ -879,7 +959,7 @@ class VelField(Obj):
 			u[i], s[i], v[i] = sp_lin.svd(
 				a.reshape(self.nt, ns))
 
-		max_lags = np.zeros(self.n)
+		max_lags = np.zeros(self.n, dtype=int)
 		rho = np.zeros((self.n, self.nx, self.ny))
 		theta = np.zeros((self.n, self.nx, self.ny))
 		for i in range(self.n):
@@ -1096,7 +1176,7 @@ def compute_omega(gaze: np.ndarray, v: np.ndarray):
 	return omega
 
 
-def _replace_z(u: np.ndarray, z: np.ndarray):
+def _replace_z(u: np.ndarray, z: Union[np.ndarray, float]):
 	u = cart2polar(u)
 	th, ph = u[:, 1], u[:, 2]
 	pos = [z / np.cos(th), th, ph]

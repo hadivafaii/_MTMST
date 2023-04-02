@@ -138,7 +138,7 @@ class Cell(nn.Module):
 			act_fn: str,
 			use_bn: bool,
 			use_se: bool,
-			scale: float = None,
+			scale: float,
 			**kwargs,
 	):
 		super(Cell, self).__init__()
@@ -155,7 +155,7 @@ class Cell(nn.Module):
 				use_bn=use_bn,
 				init_scale=scale
 				if i+1 == n_nodes
-				else None,
+				else 1.0,
 				**kwargs,
 			)
 			self.ops.append(op)
@@ -189,7 +189,8 @@ class ConvLayer(nn.Module):
 			'out_channels': co,
 			'kernel_size': 3,
 			'normalize_dim': 0,
-			'init_scale': None,
+			'apply_norm': True,
+			'init_scale': 1.0,
 			'stride': abs(stride),
 			'padding': 1,
 			'dilation': 1,
@@ -207,15 +208,15 @@ class ConvLayer(nn.Module):
 			self.bn = nn.BatchNorm2d(ci)
 		else:
 			self.bn = None
-		self.act_fn = get_act(act_fn, False)
+		self.act = get_act(act_fn, False)
 		kwargs = setup_kwargs(defaults, kwargs)
 		self.conv = Conv2D(**kwargs)
 
 	def forward(self, x):
 		if self.bn is not None:
 			x = self.bn(x)
-		if self.act_fn is not None:
-			x = self.act_fn(x)
+		if self.act is not None:
+			x = self.act(x)
 		if self.upsample is not None:
 			x = self.upsample(x)
 		x = self.conv(x)
@@ -229,7 +230,8 @@ class Conv2D(nn.Conv2d):
 			out_channels: int,
 			kernel_size: int,
 			normalize_dim: int = 0,
-			init_scale: float = None,
+			apply_norm: bool = True,
+			init_scale: float = 1.0,
 			**kwargs,
 	):
 		kwargs = filter_kwargs(nn.Conv2d, kwargs)
@@ -239,10 +241,10 @@ class Conv2D(nn.Conv2d):
 			kernel_size=kernel_size,
 			**kwargs,
 		)
+		assert init_scale > 0
+		self.apply_norm = apply_norm
 		self.dims, self.shape = _dims(normalize_dim, 4)
-		init = torch.ones(self.out_channels)
-		if init_scale is not None:
-			init *= init_scale
+		init = torch.ones(self.out_channels) * init_scale
 		self.lognorm = nn.Parameter(
 			data=torch.log(init),
 			requires_grad=True,
@@ -277,7 +279,8 @@ class DeConv2D(nn.ConvTranspose2d):
 			out_channels: int,
 			kernel_size: Union[int, Tuple[int, int]],
 			normalize_dim: int = 1,
-			init_scale: float = None,
+			apply_norm: bool = True,
+			init_scale: float = 1.0,
 			**kwargs,
 	):
 		kwargs = filter_kwargs(nn.ConvTranspose2d, kwargs)
@@ -287,10 +290,10 @@ class DeConv2D(nn.ConvTranspose2d):
 			kernel_size=kernel_size,
 			**kwargs,
 		)
+		assert init_scale > 0
+		self.apply_norm = apply_norm
 		self.dims, self.shape = _dims(normalize_dim, 4)
-		init = torch.ones(self.out_channels)
-		if init_scale is not None:
-			init *= init_scale
+		init = torch.ones(self.out_channels) * init_scale
 		self.lognorm = nn.Parameter(
 			data=torch.log(init),
 			requires_grad=True,
