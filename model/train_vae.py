@@ -111,10 +111,6 @@ class TrainerVAE(BaseTrainer):
 			self.scaler.unscale_(self.optim)
 			# clip grad
 			if self.cfg.grad_clip is not None:
-				# nn.utils.clip_grad_value_(
-				# 	parameters=self.model.parameters(),
-				# 	clip_value=self.cfg.grad_clip / 2,
-				# )
 				grad_norm = nn.utils.clip_grad_norm_(
 					parameters=self.model.parameters(),
 					max_norm=self.cfg.grad_clip,
@@ -137,7 +133,7 @@ class TrainerVAE(BaseTrainer):
 			self.pbar.set_description(', '.join([
 				f"gstep # {gstep:.3g}",
 				f"nelbo: {nelbo.avg:0.3f}",
-				f"grad: {grads.avg:0.1f}",
+				f"grad: {grads.val:0.1f}",
 			]))
 			# step
 			self.scaler.step(self.optim)

@@ -106,7 +106,7 @@ class LinearModel(Obj):
 		ax.plot(self.y_tst, lw=1.8, color='k', label='true')
 		for i, (a, r2) in enumerate(self.r2_tst.items()):
 			lbl = r"$R^2 = $" + f"{r2:0.1f}%  ("
-			lbl += r"$\alpha = $" + f"{a:0.1f})"
+			lbl += r"$\alpha = $" + f"{a:0.3g})"
 			ax.plot(self.preds[a], color=f'C{i}', label=lbl)
 		ax.legend(fontsize=9)
 		leg = ax.get_legend()

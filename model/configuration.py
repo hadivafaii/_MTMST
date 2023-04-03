@@ -197,10 +197,10 @@ class ConfigVAE(_BaseConfig):
 class ConfigTrain(_BaseConfig):
 	def __init__(
 			self,
-			lr: float = 0.001,
-			epochs: int = 1000,
-			batch_size: int = 512,
-			warmup_portion: float = 0.02,
+			lr: float = 0.002,
+			epochs: int = 2000,
+			batch_size: int = 500,
+			warmup_portion: float = 0.025,
 			optimizer: str = 'adamax_fast',
 			optimizer_kws: dict = None,
 			lambda_anneal: bool = True,

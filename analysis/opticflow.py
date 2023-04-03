@@ -937,8 +937,8 @@ class VelField(Obj):
 	def get_kers(self, idx: int = 0):
 		tker = self.u[..., idx]
 		sker = self.v[:, idx, :]
-		sker = sker.reshape(
-			(self.n, self.nx, self.ny, 2))
+		shape = (self.n, self.nx, self.ny, 2)
+		sker = sker.reshape(shape)
 		for i in range(self.n):
 			maxlag = np.argmax(np.abs(tker[i]))
 			if tker[i, maxlag] < 0:
@@ -1057,8 +1057,10 @@ class VelField(Obj):
 		axes[-1, 0].set(xticks=xticks, xticklabels=xticklabels)
 		axes[-1, 0].tick_params(axis='x', rotation=-90, labelsize=8)
 		axes[-1, 0].set_xlabel('Time [ms]', fontsize=13)
-		add_grid(axes[:, 0])
 		remove_ticks(axes[:, 1:], False)
+		for ax in axes[:, 1:].flat:
+			ax.invert_yaxis()
+		add_grid(axes[:, 0])
 		if display:
 			plt.show()
 		else:
@@ -1117,6 +1119,7 @@ class VelField(Obj):
 					fontsize=kwargs['title_fontsize'],
 					y=kwargs['title_y'],
 				)
+			axes[-1, -1].invert_yaxis()
 			remove_ticks(axes, False)
 			figs.append(fig)
 			if display:

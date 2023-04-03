@@ -95,7 +95,7 @@ class FactorizedReduce(nn.Module):
 			'padding': 0,
 			'bias': True,
 		}
-		self.swish = nn.SiLU(inplace=True)
+		self.swish = nn.SiLU()
 		self.ops = nn.ModuleList()
 		for i in range(3):
 			self.ops.append(Conv2D(**kwargs))

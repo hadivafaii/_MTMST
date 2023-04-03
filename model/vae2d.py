@@ -505,6 +505,7 @@ class VAE(Module):
 			compress=self.cfg.compress,
 			separable=self.cfg.separable,
 			latent_dim=self.cfg.n_latent_per_group,
+			act_fn='none',
 		)
 		expand = nn.ModuleList()
 		enc_sampler = nn.ModuleList()
@@ -524,13 +525,11 @@ class VAE(Module):
 				else:
 					expand.append(nn.Identity())
 				# enc sampler
-				kws['act_fn'] = 'none'
 				kws['init_scale'] = 0.7
 				enc_sampler.append(Sampler(**kws))
 				# dec sampler
 				if s == 0 and g == 0:
 					continue  # 1st group: we used a fixed standard Normal
-				kws['act_fn'] = 'elu'
 				kws['init_scale'] = 1e-2
 				dec_sampler.append(Sampler(**kws))
 			mult /= MULT
@@ -666,6 +665,7 @@ class Sampler(nn.Module):
 			**kwargs,
 	):
 		super(Sampler, self).__init__()
+		self.act = get_act(act_fn)
 		kws = dict(
 			in_channels=in_channels,
 			out_channels=latent_dim * 2,
@@ -696,7 +696,6 @@ class Sampler(nn.Module):
 				depthwise, pointwise)
 		else:
 			self.conv = Conv2D(**kwargs)
-		self.act = get_act(act_fn)
 
 	def forward(self, x):
 		if self.act is not None:
