@@ -2,7 +2,6 @@ from .utils_model import *
 MULT = 2
 
 
-@torch.jit.script
 def endpoint_error(
 		true: torch.Tensor,
 		pred: torch.Tensor,
@@ -142,6 +141,7 @@ class Cell(nn.Module):
 			**kwargs,
 	):
 		super(Cell, self).__init__()
+		assert n_nodes >= 1
 		self.skip = get_skip_connection(
 			ci, MULT, cell_type)
 		self.ops = nn.ModuleList()
@@ -479,17 +479,10 @@ class AddNorm(object):
 		return fn
 
 
-@torch.jit.script
-def _normalize(
-		lognorm: torch.Tensor,
-		weight: torch.Tensor,
-		shape: List[int],
-		dims: List[int],
-		eps: float = 1e-8, ):
+def _normalize(lognorm, weight, shape, dims, eps=1e-8):
 	n = torch.exp(lognorm).view(shape)
-	wn = torch.sqrt(torch.sum(
-		weight * weight, dim=dims))
-	wn = wn.view(shape)
+	wn = torch.linalg.vector_norm(
+		x=weight, dim=dims, keepdim=True)
 	return n * weight / (wn + eps)
 
 

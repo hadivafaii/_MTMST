@@ -1,4 +1,4 @@
-from model.utils_model import *
+from common.utils_model import *
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
@@ -7,7 +7,7 @@ class BaseTrainer(object):
 	def __init__(
 			self,
 			model: Module,
-			cfg: ConfigTrain,
+			cfg: ConfigTrainVAE,  # TODO: Implemenet ConfigTrain
 			device: str = 'cpu',
 			verbose: bool = False,
 	):
@@ -16,6 +16,7 @@ class BaseTrainer(object):
 		self.verbose = verbose
 		self.device = torch.device(device)
 		self.model = model.to(self.device).eval()
+		self.stats = collections.defaultdict(list)
 		self.scaler = torch.cuda.amp.GradScaler(
 			enabled=self.cfg.use_amp)
 		self.model_ema = None

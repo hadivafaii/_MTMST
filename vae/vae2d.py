@@ -1,4 +1,4 @@
-from .common import *
+from common.common import *
 from .distributions import Normal
 
 
@@ -520,6 +520,7 @@ class VAE(Module):
 						in_channels=self.cfg.n_latent_per_group,
 						out_channels=self.cfg.n_latent_per_group,
 						kernel_size=self.scales[s_inv],
+						apply_norm=True,
 						normalize_dim=1,
 					))
 				else:
@@ -530,7 +531,7 @@ class VAE(Module):
 				# dec sampler
 				if s == 0 and g == 0:
 					continue  # 1st group: we used a fixed standard Normal
-				kws['init_scale'] = 1e-2
+				kws['init_scale'] = 1e-3
 				dec_sampler.append(Sampler(**kws))
 			mult /= MULT
 		self.enc_sampler = enc_sampler
@@ -620,9 +621,9 @@ class VAE(Module):
 
 	def _init_norm(self, apply_norm: List[str] = None):
 		apply_norm = apply_norm if apply_norm else [
-			'stem', 'pre_process',
+			'stem', 'pre_process', 'expand',
 			'enc0', 'enc_tower', 'dec_tower',
-			'enc_sampler', 'dec_sampler', 'expand',
+			'enc_sampler', 'dec_sampler',
 		]
 		self.all_log_norm = []
 		self.all_conv_layers = []
@@ -661,16 +662,16 @@ class Sampler(nn.Module):
 			act_fn: str = 'none',
 			compress: bool = True,
 			separable: bool = False,
+			init_scale: float = 1.0,
 			bias: bool = True,
-			**kwargs,
 	):
 		super(Sampler, self).__init__()
-		self.act = get_act(act_fn)
+		self.act = get_act(act_fn, False)
 		kws = dict(
 			in_channels=in_channels,
 			out_channels=latent_dim * 2,
+			init_scale=init_scale,
 			apply_norm=False,
-			init_scale=1.0,
 			bias=bias,
 		)
 		if compress:
@@ -679,7 +680,6 @@ class Sampler(nn.Module):
 		else:
 			kws['kernel_size'] = 3
 			kws['padding'] = 1
-		kwargs = setup_kwargs(kws, kwargs)
 
 		if separable:
 			depthwise = Conv2D(
@@ -688,14 +688,15 @@ class Sampler(nn.Module):
 				kernel_size=spatial_dim,
 				groups=in_channels,
 				apply_norm=True,
+				init_scale=1.0,
 				bias=bias,
 			)
-			kwargs['kernel_size'] = 1
-			pointwise = Conv2D(**kwargs)
+			kws['kernel_size'] = 1
+			pointwise = Conv2D(**kws)
 			self.conv = nn.Sequential(
 				depthwise, pointwise)
 		else:
-			self.conv = Conv2D(**kwargs)
+			self.conv = Conv2D(**kws)
 
 	def forward(self, x):
 		if self.act is not None:

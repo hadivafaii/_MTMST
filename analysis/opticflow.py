@@ -63,58 +63,58 @@ class OpticFlow(object):
 		self.objects = {}
 
 	def groundtruth_factors(self):
+		v_slf_polar = cart2polar(self.v_slf)
 		factors = {
 			'fix_x': self.fix[:, 0],
 			'fix_y': self.fix[:, 1],
-			'slf_v_x': self.v_slf[:, 0],
-			'slf_v_y': self.v_slf[:, 1],
-			'slf_v_z': self.v_slf[:, 2],
-		}
-		v_slf_polar = cart2polar(self.v_slf)
-		factors_aux = {
 			'slf_v_mag': v_slf_polar[:, 0],
 			'slf_v_theta': v_slf_polar[:, 1],
 			'slf_v_phi': v_slf_polar[:, 2],
 		}
+		factors_aux = {
+			'slf_v_x': self.v_slf[:, 0],
+			'slf_v_y': self.v_slf[:, 1],
+			'slf_v_z': self.v_slf[:, 2],
+		}
 		for i, obj in self.objects.items():
+			v_obj_polar = cart2polar(obj.v)
 			factors = {
 				**factors,
 				f'obj{i}_alpha_x': obj.alpha[:, 0],
 				f'obj{i}_alpha_y': obj.alpha[:, 1],
 				f'obj{i}_dist': obj.r[:, 0],
-				f'obj{i}_v_x': obj.v[:, 0],
-				f'obj{i}_v_y': obj.v[:, 1],
-				f'obj{i}_v_z': obj.v[:, 2],
+				f'obj{i}_v_mag': v_obj_polar[:, 0],
+				f'obj{i}_v_theta': v_obj_polar[:, 1],
+				f'obj{i}_v_phi': v_obj_polar[:, 2],
 			}
 			delta_x = obj.pos - self.fix
 			delta_v = obj.v - self.v_slf
 			dv_polar = cart2polar(delta_v)
-			v_obj_polar = cart2polar(obj.v)
 			factors_aux = {
 				**factors_aux,
-				'obj0_size': obj.size,
-				'obj0_theta': obj.r[:, 1],
-				'obj0_phi': obj.r[:, 2],
+				f'obj{i}_size': obj.size,
+				f'obj{i}_theta': obj.r[:, 1],
+				f'obj{i}_phi': obj.r[:, 2],
 
-				'obj0_x': obj.pos[:, 0],
-				'obj0_y': obj.pos[:, 1],
-				'obj0_z': obj.pos[:, 2],
+				f'obj{i}_x': obj.pos[:, 0],
+				f'obj{i}_y': obj.pos[:, 1],
+				f'obj{i}_z': obj.pos[:, 2],
 
-				'obj0_dx': delta_x[:, 0],
-				'obj0_dy': delta_x[:, 1],
-				'obj0_dz': delta_x[:, 2],
+				f'obj{i}_dx': delta_x[:, 0],
+				f'obj{i}_dy': delta_x[:, 1],
+				f'obj{i}_dz': delta_x[:, 2],
 
-				'obj0_v_mag': v_obj_polar[:, 0],
-				'obj0_v_theta': v_obj_polar[:, 1],
-				'obj0_v_phi': v_obj_polar[:, 2],
+				f'obj{i}_dv_x': delta_v[:, 0],
+				f'obj{i}_dv_y': delta_v[:, 1],
+				f'obj{i}_dv_z': delta_v[:, 2],
 
-				'obj0_dv_x': delta_v[:, 0],
-				'obj0_dv_y': delta_v[:, 1],
-				'obj0_dv_z': delta_v[:, 2],
+				f'obj{i}_dv_mag': dv_polar[:, 0],
+				f'obj{i}_dv_theta': dv_polar[:, 1],
+				f'obj{i}_dv_phi': dv_polar[:, 2],
 
-				'obj0_dv_mag': dv_polar[:, 0],
-				'obj0_dv_theta': dv_polar[:, 1],
-				'obj0_dv_phi': dv_polar[:, 2],
+				f'obj{i}_v_x': obj.v[:, 0],
+				f'obj{i}_v_y': obj.v[:, 1],
+				f'obj{i}_v_z': obj.v[:, 2],
 			}
 		f, f_aux = map(
 			lambda d: list(d.keys()),
@@ -779,23 +779,20 @@ class HyperFlow(Obj):
 			size: Tuple[int, int],
 			sres: float = 1.0,
 			radius: float = 8.0,
-			bound: float = 2.0,
 			**kwargs,
 	):
 		super(HyperFlow, self).__init__(**kwargs)
 		assert len(params) == len(center)
 		assert params.shape[1] == 6
 		assert center.shape[1] == 2
+		self.params = params
+		self.center = center
 		if not isinstance(size, Iterable):
 			size = (size, size)
 		assert len(size) == 2
-		self.params = params
-		self.center = center
 		self.size = size
 		self.sres = sres
 		self.radius = radius
-		self.bound = bound
-		self.stim = None
 
 	def compute_hyperflow(self):
 		dim = tuple(
@@ -804,9 +801,7 @@ class HyperFlow(Obj):
 		)
 		shape = (-1, ) + dim + (2, )
 		stim = self._hf().reshape(shape)
-		stim /= np.max(np.abs(stim))
-		self.stim = self.bound * stim
-		return self.stim
+		return stim
 
 	def show_psd(
 			self,

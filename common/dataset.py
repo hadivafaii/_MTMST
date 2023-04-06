@@ -79,7 +79,7 @@ def setup_repeat_data(
 	hf_kws = hf_kws if hf_kws else {
 		'size': 32,
 		'sres': 1,
-		'radius': 6,
+		'radius': 8,
 	}
 	group = group['repeats']
 	psth = np.array(group['psth_raw_all'], dtype=float)
@@ -100,16 +100,18 @@ def setup_repeat_data(
 	else:
 		stim = np.array(group['stimR'], dtype=float)
 	intvl = range(tstart[1], tstart[1] + length)
-	src = time_embed(stim, lags, intvl)
+	intvl = np.array(intvl)
+	if lags is not None:
+		stim = time_embed(stim, lags, intvl)
 	# spks
-	spks = np.array(group['spksR'], dtype=float)
-	tgt = np_nans(psth.shape)
+	_spks = np.array(group['spksR'], dtype=float)
+	spks = np_nans(psth.shape)
 	for i in range(nc):
 		for trial, t in enumerate(tstart):
 			s_ = range(t, t + length)
-			tgt[i][trial] = spks[:, i][s_]
-	tgt[badspks] = np.nan
-	return src, tgt, intvl
+			spks[i][trial] = _spks[:, i][s_]
+	spks[badspks] = np.nan
+	return stim, spks, intvl
 
 
 def setup_supervised_data(

@@ -1,7 +1,8 @@
-from utils.plotting import *
-from .configuration import ConfigVAE, ConfigTrain
-from torch.nn import functional as F
 from torch import nn
+from torch.nn import functional as F
+from utils.plotting import *
+from vae.config_vae import (
+	ConfigVAE, ConfigTrainVAE)
 
 
 def beta_anneal_cosine(
@@ -153,7 +154,7 @@ def load_model(
 	fname = fname.split('.')[0]
 	fname = fname.replace('Config', '')
 	if fname == 'VAE':
-		from .vae2d import VAE
+		from vae.vae2d import VAE
 		model = VAE(cfg, verbose=verbose)
 	else:
 		raise NotImplementedError
@@ -189,11 +190,11 @@ def load_model(
 	)
 	with open(pjoin(path, fname), 'r') as f:
 		cfg_train = json.load(f)
-	cfg_train = ConfigTrain(**cfg_train)
+	cfg_train = ConfigTrainVAE(**cfg_train)
 	fname = fname.split('.')[0]
 	fname = fname.replace('Config', '')
 	if fname == 'Train':
-		from .train_vae import TrainerVAE
+		from vae.train_vae import TrainerVAE
 		trainer = TrainerVAE(
 			model=model,
 			cfg=cfg_train,

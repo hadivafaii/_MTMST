@@ -1,7 +1,7 @@
-from .train_base import *
-from .dataset import ROFL
-from model.vae2d import VAE
-from analysis.regression import regress
+from .vae2d import VAE
+from common.dataset import ROFL
+from common.train_base import *
+from analysis.linear import regress
 from figures.fighelper import show_heatmap, show_opticflow
 
 
@@ -9,7 +9,7 @@ class TrainerVAE(BaseTrainer):
 	def __init__(
 			self,
 			model: VAE,
-			cfg: ConfigTrain,
+			cfg: ConfigTrainVAE,
 			ema: bool = True,
 			**kwargs,
 	):
@@ -19,7 +19,6 @@ class TrainerVAE(BaseTrainer):
 			self.model_ema = VAE(model.cfg).to(self.device).eval()
 			self.ema_rate = self.to(self.cfg.ema_rate)
 		self.n_iters = self.cfg.epochs * len(self.dl_trn)
-		self.stats = collections.defaultdict(list)
 		if self.cfg.kl_balancer is not None:
 			alphas = kl_balancer_coeff(
 				groups=self.model.cfg.groups,
@@ -65,7 +64,6 @@ class TrainerVAE(BaseTrainer):
 		self.model.train()
 		nelbo = AvgrageMeter()
 		grads = AvgrageMeter()
-		gradmax = AvgrageMeter()
 		perdim_kl = AvgrageMeter()
 		perdim_epe = AvgrageMeter()
 		for i, (x, norm) in enumerate(self.dl_trn):
@@ -120,21 +118,18 @@ class TrainerVAE(BaseTrainer):
 					self.stats['grad'].append(grad_norm)
 					self.stats['loss'].append(loss.item())
 			# update average meters & stats
-			gradmax.update(np.max([
-				p.grad.abs().max().item() for
-				p in self.model.parameters()
-			]))
-			nelbo.update(loss.item())
-			perdim_kl.update(
-				torch.stack(kl_diag).mean().item())
+			nelbo.update(loss)
+			perdim_kl.update(torch.stack(kl_diag).mean())
 			perdim_epe.update(
-				epe.mean().item() / self.model.cfg.input_sz**2)
+				epe.mean() / self.model.cfg.input_sz**2)
 			self.stats['gamma'].append(to_np(gamma))
-			self.pbar.set_description(', '.join([
+			msg = [
 				f"gstep # {gstep:.3g}",
 				f"nelbo: {nelbo.avg:0.3f}",
-				f"grad: {grads.val:0.1f}",
-			]))
+			]
+			if self.cfg.grad_clip:
+				msg += [f"grad: {grads.val:0.1f}"]
+			self.pbar.set_description(', '.join(msg))
 			# step
 			self.scaler.step(self.optim)
 			self.scaler.update()
@@ -160,13 +155,13 @@ class TrainerVAE(BaseTrainer):
 				'train/lr': self.optim.param_groups[0]['lr'],
 				'train/loss_kl': torch.mean(sum(kl_all)).item(),
 				'train/loss_epe': torch.mean(epe).item(),
-				'train/nelbo_avg': nelbo.avg,
-				'train/perdim_kl': perdim_kl.avg,
-				'train/perdim_epe': perdim_epe.avg,
+				'train/nelbo_avg': nelbo.avg.item(),
+				'train/perdim_kl': perdim_kl.avg.item(),
+				'train/perdim_epe': perdim_epe.avg.item(),
 				'train/reg_weight': loss_w.item(),
-				'grads/max': gradmax.val,
-				'grads/norm': grads.avg,
 			}
+			if self.cfg.grad_clip is not None:
+				to_write['train/grad_norm'] = grads.avg
 			if cond_reg_spectral:
 				to_write['train/reg_spectral'] = loss_sr.item()
 			total_active = 0
@@ -193,7 +188,7 @@ class TrainerVAE(BaseTrainer):
 		# sample? plot?
 		if gstep is not None:
 			i = int(gstep / len(self.dl_trn))
-			cond = i % (self.cfg.eval_freq * 5) == 0
+			cond = i % (self.cfg.eval_freq * 2) == 0
 		else:
 			cond = True
 		cond = cond and n_samples is not None

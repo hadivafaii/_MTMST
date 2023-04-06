@@ -1,4 +1,4 @@
-from .utils_model import *
+from common.utils_model import *
 
 
 class Normal:
@@ -11,7 +11,7 @@ class Normal:
 			device: torch.device = None,
 	):
 		self.mu = mu
-		logsig = softclamp(logsig, 5)
+		logsig = softclamp(logsig, 4)
 		self.sigma = torch.exp(logsig)
 		if temp != 1.0:
 			assert temp >= 0
@@ -78,13 +78,3 @@ def residual_kl(
 		delta_sig.pow(2) - 1 +
 		(delta_mu / sigma).pow(2)
 	) - torch.log(delta_sig)
-
-
-def explin(p: torch.Tensor):
-	above = torch.clamp(p, min=0)
-	below = torch.clamp(p, max=0)
-	return torch.where(
-		condition=p <= 0,
-		input=below.exp(),
-		other=above + 1,
-	)
