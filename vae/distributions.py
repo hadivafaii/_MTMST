@@ -1,4 +1,4 @@
-from common.utils_model import *
+from base.utils_model import *
 
 
 class Normal:

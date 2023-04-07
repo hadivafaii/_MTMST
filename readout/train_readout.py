@@ -1,1 +1,1 @@
-from common.train_base import *
+from base.train_base import *

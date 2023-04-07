@@ -1,4 +1,4 @@
-from common.utils_model import *
+from base.utils_model import *
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 

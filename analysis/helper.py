@@ -1,7 +1,69 @@
 from utils.plotting import *
-from sklearn import linear_model
-from sklearn.metrics import r2_score
-from sklearn.model_selection import KFold
+from sklearn import metrics as sk_metric
+from sklearn import neighbors as sk_neigh
+from sklearn import linear_model as sk_linear
+from sklearn import model_selection as sk_modselect
+
+
+def discrete_mutual_info(
+		z: np.ndarray,
+		g: np.ndarray,
+		axis: int = 1,
+		n_bins: int = 20,
+		parallel: bool = True,
+		n_jobs: int = -1, ):
+	assert axis in [0, 1]
+	assert g.ndim == z.ndim == 2
+	shape = (g.shape[axis], z.shape[axis])
+	gd = {
+		i: digitize(g.take(i, axis), n_bins)
+		for i in range(shape[0])
+	}
+	zd = {
+		j: digitize(z.take(j, axis), n_bins)
+		for j in range(shape[1])
+	}
+	if parallel:
+		looper = itertools.product(
+			range(shape[0]), range(shape[1]))
+		with joblib.parallel_backend('multiprocessing'):
+			mi_normalized = joblib.Parallel(n_jobs=n_jobs)(
+				joblib.delayed(_mi)(gd[i], zd[j]) for i, j in looper
+			)
+		mi_normalized = np.reshape(mi_normalized, shape)
+	else:
+		mi_normalized = np.zeros(shape)
+		for i in range(shape[0]):
+			for j in range(shape[1]):
+				mi_normalized[i, j] = _mi(gd[i], zd[j])
+	return mi_normalized
+
+
+def _mi(g, z):
+	mi_gz = sk_metric.mutual_info_score(g, z)
+	ent_g = sk_metric.mutual_info_score(g, g)
+	return mi_gz / ent_g
+
+
+def digitize(a: np.ndarray, n_bins: int):
+	bins = np.histogram(a, bins=n_bins)[1]
+	inds = np.digitize(a, bins[:-1], False)
+	return inds
+
+
+def entropy_discrete(a: np.ndarray, n_bins: int):
+	a = digitize(a, n_bins)
+	ent = sk_metric.mutual_info_score(a, a)
+	ent /= np.log(n_bins)
+	return ent
+
+
+def entropy_normalized(p: np.ndarray, axis: int):
+	return sp_stats.entropy(p, axis=axis, base=p.shape[axis])
+
+
+def flatten_stim(x):
+	return flatten_arr(x, ndim_end=0, ndim_start=1)
 
 
 def null_adj_ll(

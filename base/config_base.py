@@ -36,7 +36,7 @@ class BaseConfig(object):
 
 	def save(self, save_dir: str = None, verbose: bool = False):
 		save_dir = save_dir if save_dir else self.save_dir
-		_save(self, save_dir, verbose)
+		_save_config(self, save_dir, verbose)
 
 	def get_all_dirs(self):
 		dirs = {k: getattr(self, k) for k in dir(self) if '_dir' in k}
@@ -103,7 +103,7 @@ class BaseConfigTrain(object):
 		raise NotImplementedError
 
 	def save(self, save_dir: str, verbose: bool = False):
-		_save(self, save_dir, verbose)
+		_save_config(self, save_dir, verbose)
 
 	def _set_optim_kws(self, kws):
 		defaults = {
@@ -152,7 +152,7 @@ class BaseConfigTrain(object):
 		return
 
 
-def _save(obj, save_dir: str, verbose: bool = False):
+def _save_config(obj, save_dir: str, verbose: bool = False):
 	fname = type(obj).__name__
 	file = pjoin(save_dir, f"{fname}.json")
 	if os.path.isfile(file):

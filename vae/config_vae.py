@@ -1,4 +1,4 @@
-from common.config_base import *
+from base.config_base import *
 
 
 class ConfigVAE(BaseConfig):
@@ -125,10 +125,10 @@ class ConfigTrainVAE(BaseConfigTrain):
 			kl_balancer: str = 'equal',
 			kl_anneal_cycles: int = 1,
 			kl_anneal_portion: float = 0.3,
-			kl_const_portion: float = 1e-3,
+			kl_const_portion: float = 1e-4,
 			lambda_anneal: bool = True,
 			lambda_init: float = 1e-7,
-			lambda_norm: float = 1e-3,
+			lambda_norm: float = 1e-4,
 			spectral_reg: bool = False,
 			**kwargs,
 	):
@@ -141,7 +141,7 @@ class ConfigTrainVAE(BaseConfigTrain):
 			optimizer_kws=None,
 			scheduler_type='cosine',
 			scheduler_kws=None,
-			ema_rate=1 - 1e-3,
+			ema_rate=0.999,
 			grad_clip=1000,
 			use_amp=False,
 			chkpt_freq=50,

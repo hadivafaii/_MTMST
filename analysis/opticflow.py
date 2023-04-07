@@ -24,6 +24,7 @@ class OpticFlow(object):
 			vlim_obj: Tuple[float, float] = (0.01, 1.0),
 			vlim_slf: Tuple[float, float] = (0.01, 1.0),
 			residual: bool = False,
+			verbose: bool = False,
 			z_bg: float = 1.0,
 			seed: int = 0,
 			**kwargs,
@@ -57,6 +58,7 @@ class OpticFlow(object):
 		self._init_span()
 		self._init_polar_coords()
 		self.residual = residual
+		self.verbose = verbose
 		self.alpha_dot = None
 		self.z_env = None
 		self.v_slf = None
@@ -92,6 +94,11 @@ class OpticFlow(object):
 			dv_polar = cart2polar(delta_v)
 			factors_aux = {
 				**factors_aux,
+
+				f'obj{i}_v_x': obj.v[:, 0],
+				f'obj{i}_v_y': obj.v[:, 1],
+				f'obj{i}_v_z': obj.v[:, 2],
+
 				f'obj{i}_size': obj.size,
 				f'obj{i}_theta': obj.r[:, 1],
 				f'obj{i}_phi': obj.r[:, 2],
@@ -111,10 +118,6 @@ class OpticFlow(object):
 				f'obj{i}_dv_mag': dv_polar[:, 0],
 				f'obj{i}_dv_theta': dv_polar[:, 1],
 				f'obj{i}_dv_phi': dv_polar[:, 2],
-
-				f'obj{i}_v_x': obj.v[:, 0],
-				f'obj{i}_v_y': obj.v[:, 1],
-				f'obj{i}_v_z': obj.v[:, 2],
 			}
 		f, f_aux = map(
 			lambda d: list(d.keys()),

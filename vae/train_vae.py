@@ -1,6 +1,6 @@
 from .vae2d import VAE
-from common.dataset import ROFL
-from common.train_base import *
+from base.dataset import ROFL
+from base.train_base import *
 from analysis.linear import regress
 from figures.fighelper import show_heatmap, show_opticflow
 
@@ -171,9 +171,9 @@ class TrainerVAE(BaseTrainer):
 				n_active = torch.sum(kl_diag_i > 0.1).item()
 				to_write[f"kl_full/active_{j}"] = n_active
 				total_active += n_active
-			to_write['kl/total_active'] = total_active
+			to_write['train/total_active'] = total_active
 			ratio = total_active / self.model.cfg.total_latents()
-			to_write['kl/total_active_ratio'] = ratio
+			to_write['train/total_active_ratio'] = ratio
 			for k, v in to_write.items():
 				self.writer.add_scalar(k, v, gstep)
 
@@ -208,10 +208,17 @@ class TrainerVAE(BaseTrainer):
 			for k, v in loss.items():
 				self.writer.add_scalar(f"eval/{k}", v.mean(), gstep)
 			if cond:
-				r = np.diag(regr['regr/r']).mean()
-				mi = np.max(regr['regr/mi'], axis=1).mean()
-				self.writer.add_scalar(f"eval/r", r, gstep)
-				self.writer.add_scalar(f"eval/mi", mi, gstep)
+				to_write = {
+					'eval/r2': regr['regr/r2'].mean() * 100,
+					'eval/r': np.diag(regr['regr/r']).mean(),
+					'eval/mi': np.max(regr['regr/mi'], 1).mean(),
+					'eval/mi_norm': np.max(regr['regr/mi_norm'], 1).mean(),
+					'eval/mig': regr['regr/mig'].mean(),
+					'eval/disentang': regr['regr/d'],
+					'eval/complete': regr['regr/c'],
+				}
+				for k, v in to_write.items():
+					self.writer.add_scalar(k, v, gstep)
 				for k, v in figs.items():
 					self.writer.add_figure(k, v, gstep)
 		return data, loss
@@ -294,15 +301,17 @@ class TrainerVAE(BaseTrainer):
 			z_tst = z_tst.mean(0)
 		g_vld = self.dl_vld.dataset.factors
 		g_tst = self.dl_tst.dataset.factors
-		mi, r, lr = regress(z_vld, g_vld, z_tst, g_tst)
+		output = regress(z_vld, g_vld, z_tst, g_tst)
+		output = {
+			f"regr/{k}": v for
+			k, v in output.items()
+		}
 		output = {
 			'z_vld': z_vld,
 			'z_tst': z_tst,
 			'g_vld': g_vld,
 			'g_tst': g_tst,
-			'regr/mi': mi,
-			'regr/r': r,
-			'regr/lr': lr,
+			**output,
 		}
 		return output
 

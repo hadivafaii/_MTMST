@@ -1,1 +1,1 @@
-from common.config_base import *
+from base.config_base import *

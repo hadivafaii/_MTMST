@@ -8,6 +8,7 @@ def regress(
 		g: np.ndarray,
 		z_tst: np.ndarray,
 		g_tst: np.ndarray,
+		n_bins: int = 20,
 		parallel: bool = True,
 		n_jobs: int = -1, ):
 	# mi regression
@@ -22,14 +23,69 @@ def regress(
 		mi = np.zeros((g.shape[-1], z.shape[-1]))
 		for i in range(len(mi)):
 			mi[i] = mutual_info_regression(z, g[:, i])
-	# linear regression
-	lr = linear_model.LinearRegression().fit(z, g)
-	r = 1 - sp_dist.cdist(
-		XA=g_tst.T,
-		XB=lr.predict(z_tst).T,
-		metric='correlation',
+	# mi normalized (discrete)
+	mi_normalized = discrete_mutual_info(
+		z=z,
+		g=g,
+		axis=1,
+		n_bins=n_bins,
+		parallel=parallel,
+		n_jobs=n_jobs,
 	)
-	return mi, r, lr
+	# linear regression
+	lr = sk_linear.LinearRegression().fit(z, g)
+	g_pred = lr.predict(z_tst)
+	# DCI
+	w = np.abs(lr.coef_)
+	w *= z.std(0).reshape(1, -1)
+	w /= g.std(0).reshape(-1, 1)
+	d, c = compute_dci(w)
+
+	output = {
+		'mi': mi,
+		'mi_norm': mi_normalized,
+		'mig': compute_mig(mi_normalized),
+		'r': 1 - sp_dist.cdist(
+			XA=g_tst.T,
+			XB=g_pred.T,
+			metric='correlation'),
+		'r2': sk_metric.r2_score(
+			y_true=g_tst,
+			y_pred=g_pred,
+			multioutput='raw_values'),
+		'd': d,
+		'c': c,
+	}
+	return output
+
+
+def compute_mig(mi_normalized: np.ndarray, axis: int = 0):
+	assert mi_normalized.ndim == 2
+	n_factors = mi_normalized.shape[axis]
+	mig = np.zeros(n_factors)
+	for i in range(n_factors):
+		a = mi_normalized.take(i, axis)
+		inds = np.argsort(a)[::-1]
+		mig[i] = a[inds[0]] - a[inds[1]]
+	return mig
+
+
+def compute_dci(w: np.array):
+	# p_disentang
+	numen = w.sum(0, keepdims=True)
+	numen[numen == 0] = np.nan
+	p_disentang = w / numen
+	# p_complete
+	numen = w.sum(1, keepdims=True)
+	numen[numen == 0] = np.nan
+	p_complete = w / numen
+	# compute D and C
+	disentang_i = 1 - entropy_normalized(p_disentang, 0)
+	complete_mu = 1 - entropy_normalized(p_complete, 1)
+	rho = w.sum(0) / w.sum()
+	d = np.nansum(disentang_i * rho)
+	c = np.nanmean(complete_mu)
+	return d, c
 
 
 class LinearModel(Obj):
@@ -46,7 +102,7 @@ class LinearModel(Obj):
 			**kwargs,
 	):
 		super(LinearModel, self).__init__(**kwargs)
-		self.fn = getattr(linear_model, category)
+		self.fn = getattr(sk_linear, category)
 		self.defaults = get_default_params(self.fn)
 		if 'random_state' in self.defaults:
 			self.defaults['random_state'] = seed
@@ -59,7 +115,7 @@ class LinearModel(Obj):
 			alphas = [0.1, 1, 10, 100]
 		assert isinstance(alphas, Iterable)
 		self.alphas = alphas
-		self.kf = KFold(
+		self.kf = sk_modselect.KFold(
 			n_splits=n_folds,
 			random_state=seed,
 			shuffle=True,
@@ -90,7 +146,7 @@ class LinearModel(Obj):
 			if self.x_tst is not None:
 				pred = model.predict(flatten_stim(self.x_tst))
 				self.r_tst[a] = sp_stats.pearsonr(self.y_tst, pred)[0]
-				self.r2_tst[a] = r2_score(self.y_tst, pred) * 100
+				self.r2_tst[a] = sk_metric.r2_score(self.y_tst, pred) * 100
 				self.preds[a] = pred
 		if self.df is None and fit_df:
 			self._fit_df(**kwargs)
@@ -126,7 +182,7 @@ class LinearModel(Obj):
 			r.append(sp_stats.pearsonr(self.y[vld], pred)[0])
 			if self.x_tst is not None:
 				pred = model.predict(flatten_stim(self.x_tst))
-				r2.append(r2_score(self.y_tst, pred) * 100)
+				r2.append(sk_metric.r2_score(self.y_tst, pred) * 100)
 			else:
 				r2.append(None)
 		return nnll, r2, r
@@ -147,7 +203,3 @@ class LinearModel(Obj):
 		ax.grid()
 		plt.show()
 		return fig, ax
-
-
-def flatten_stim(x):
-	return flatten_arr(x, ndim_end=0, ndim_start=1)

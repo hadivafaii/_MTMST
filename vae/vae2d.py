@@ -1,4 +1,4 @@
-from common.common import *
+from base.common import *
 from .distributions import Normal
 
 
