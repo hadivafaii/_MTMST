@@ -68,7 +68,10 @@ def get_skip_connection(
 		raise NotImplementedError(stride)
 
 
-def get_act(fn: str, inplace: bool = False):
+def get_act_fn(
+		fn: str,
+		inplace: bool = False,
+		**kwargs, ):
 	if fn == 'none':
 		return None
 	elif fn == 'relu':
@@ -76,7 +79,9 @@ def get_act(fn: str, inplace: bool = False):
 	elif fn == 'swish':
 		return nn.SiLU(inplace=inplace)
 	elif fn == 'elu':
-		return nn.ELU(inplace=inplace)
+		return nn.ELU(inplace=inplace, **kwargs)
+	elif fn == 'softplus':
+		return nn.Softplus(**kwargs)
 	else:
 		raise NotImplementedError(fn)
 
@@ -208,19 +213,70 @@ class ConvLayer(nn.Module):
 			self.bn = nn.BatchNorm2d(ci)
 		else:
 			self.bn = None
-		self.act = get_act(act_fn, False)
+		self.act_fn = get_act_fn(act_fn, False)
 		kwargs = setup_kwargs(defaults, kwargs)
 		self.conv = Conv2D(**kwargs)
 
 	def forward(self, x):
 		if self.bn is not None:
 			x = self.bn(x)
-		if self.act is not None:
-			x = self.act(x)
+		if self.act_fn is not None:
+			x = self.act_fn(x)
 		if self.upsample is not None:
 			x = self.upsample(x)
 		x = self.conv(x)
 		return x
+
+
+class Conv1D(nn.Conv1d):
+	def __init__(
+			self,
+			in_channels: int,
+			out_channels: int,
+			kernel_size: int,
+			normalize_dim: int = 0,
+			apply_norm: bool = True,
+			init_scale: float = 1.0,
+			**kwargs,
+	):
+		kwargs = filter_kwargs(nn.Conv1d, kwargs)
+		self.pad = kernel_size - 1
+		kwargs['padding'] = self.pad
+		super(Conv1D, self).__init__(
+			in_channels=in_channels,
+			out_channels=out_channels,
+			kernel_size=kernel_size,
+			**kwargs,
+		)
+		assert init_scale > 0
+		self.apply_norm = apply_norm
+		self.dims, self.shape = _dims(normalize_dim, 3)
+		init = torch.ones(self.out_channels) * init_scale
+		self.lognorm = nn.Parameter(
+			data=torch.log(init),
+			requires_grad=True,
+		)
+		self._normalize_weight()
+
+	def forward(self, x):
+		self._normalize_weight()
+		return F.conv1d(
+			input=x,
+			weight=self.w,
+			bias=self.bias,
+			stride=self.stride,
+			padding=self.padding,
+			dilation=self.dilation,
+			groups=self.groups,
+		)[..., :-self.pad].contiguous()
+
+	def _normalize_weight(self):
+		self.w = _normalize(
+			lognorm=self.lognorm,
+			weight=self.weight,
+			shape=self.shape,
+			dims=self.dims,
+		)
 
 
 class Conv2D(nn.Conv2d):
@@ -327,6 +383,8 @@ class Linear(nn.Linear):
 			in_features: int,
 			out_features: int,
 			normalize_dim: int = 0,
+			apply_norm: bool = True,
+			init_scale: float = 1.0,
 			**kwargs,
 	):
 		kwargs = filter_kwargs(nn.Linear, kwargs)
@@ -335,11 +393,12 @@ class Linear(nn.Linear):
 			out_features=out_features,
 			**kwargs,
 		)
+		assert init_scale > 0
+		self.apply_norm = apply_norm
 		self.dims, self.shape = _dims(normalize_dim, 2)
-		init = torch.linalg.vector_norm(
-			x=self.weight, dim=self.dims)
+		init = torch.ones(self.out_features) * init_scale
 		self.lognorm = nn.Parameter(
-			torch.log(init + 1e-2),
+			data=torch.log(init),
 			requires_grad=True,
 		)
 		self._normalize_weight()

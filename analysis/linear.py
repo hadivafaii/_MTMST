@@ -9,8 +9,13 @@ def regress(
 		z_tst: np.ndarray,
 		g_tst: np.ndarray,
 		n_bins: int = 20,
+		process: bool = True,
 		parallel: bool = True,
 		n_jobs: int = -1, ):
+	if process:
+		mu, sd = z.mean(), z.std()
+		z = (z - mu) / sd
+		z_tst = (z_tst - mu) / sd
 	# mi regression
 	if parallel:
 		with joblib.parallel_backend('multiprocessing'):
@@ -72,19 +77,19 @@ def compute_mig(mi_normalized: np.ndarray, axis: int = 0):
 
 def compute_dci(w: np.array):
 	# p_disentang
-	numen = w.sum(0, keepdims=True)
-	numen[numen == 0] = np.nan
-	p_disentang = w / numen
+	denum = w.sum(0, keepdims=True)
+	denum[denum == 0] = np.nan
+	p_disentang = w / denum
 	# p_complete
-	numen = w.sum(1, keepdims=True)
-	numen[numen == 0] = np.nan
-	p_complete = w / numen
+	denum = w.sum(1, keepdims=True)
+	denum[denum == 0] = np.nan
+	p_complete = w / denum
 	# compute D and C
-	disentang_i = 1 - entropy_normalized(p_disentang, 0)
-	complete_mu = 1 - entropy_normalized(p_complete, 1)
+	d_i = 1 - entropy_normalized(p_disentang, 0)
+	c_mu = 1 - entropy_normalized(p_complete, 1)
 	rho = w.sum(0) / w.sum()
-	d = np.nansum(disentang_i * rho)
-	c = np.nanmean(complete_mu)
+	d = np.nansum(d_i * rho)
+	c = np.nanmean(c_mu)
 	return d, c
 
 
@@ -203,3 +208,32 @@ class LinearModel(Obj):
 		ax.grid()
 		plt.show()
 		return fig, ax
+
+
+def compute_sta(
+		lags: int,
+		good: np.ndarray,
+		stim: np.ndarray,
+		spks: np.ndarray,
+		verbose: bool = False,
+		normalize: bool = True, ):
+	assert lags >= 0
+	shape = stim.shape
+	nc = spks.shape[-1]
+	sta = np.zeros((nc, lags+1) + shape[1:])
+	shape = (nc,) + (1,) * len(shape)
+
+	idxs = good.copy()
+	idxs = idxs[idxs > lags]
+	for t in tqdm(idxs, disable=not verbose):
+		# zero lags allowed:
+		x = stim[t - lags: t + 1]
+		x = np.expand_dims(x, 0)
+		x = np.repeat(x, nc, axis=0)
+		y = spks[t].reshape(shape)
+		sta += x * y
+	if normalize:
+		n = spks[idxs].sum(0)
+		n = n.reshape(shape)
+		sta /= n
+	return sta

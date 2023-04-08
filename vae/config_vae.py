@@ -70,9 +70,6 @@ class ConfigVAE(BaseConfig):
 		self.ada_groups = ada_groups
 		self.use_se = use_se
 
-	def total_latents(self):
-		return sum(self.groups) * self.n_latent_per_group
-
 	def name(self):
 		name = [
 			'x'.join([
@@ -115,6 +112,9 @@ class ConfigVAE(BaseConfig):
 		if self.use_bn:
 			name = f"{name}_bn"
 		return name
+
+	def total_latents(self):
+		return sum(self.groups) * self.n_latent_per_group
 
 
 class ConfigTrainVAE(BaseConfigTrain):

@@ -16,13 +16,13 @@ class OpticFlow(object):
 			category: str,
 			n: int = 1,
 			n_obj: int = 1,
-			dim: int = 19,
+			dim: int = 65,
 			fov: float = 45.0,
 			obj_r: float = 0.2,
 			obj_bound: float = 0.97,
 			obj_zlim: Tuple[float, float] = (0.5, 1.0),
-			vlim_obj: Tuple[float, float] = (0.01, 1.0),
-			vlim_slf: Tuple[float, float] = (0.01, 1.0),
+			vlim_obj: Tuple[float, float] = (0.01, 5.0),
+			vlim_slf: Tuple[float, float] = (0.01, 5.0),
 			residual: bool = False,
 			verbose: bool = False,
 			z_bg: float = 1.0,
@@ -65,60 +65,71 @@ class OpticFlow(object):
 		self.objects = {}
 
 	def groundtruth_factors(self):
-		v_slf_polar = cart2polar(self.v_slf)
 		factors = {
 			'fix_x': self.fix[:, 0],
 			'fix_y': self.fix[:, 1],
-			'slf_v_mag': v_slf_polar[:, 0],
-			'slf_v_theta': v_slf_polar[:, 1],
-			'slf_v_phi': v_slf_polar[:, 2],
 		}
-		factors_aux = {
-			'slf_v_x': self.v_slf[:, 0],
-			'slf_v_y': self.v_slf[:, 1],
-			'slf_v_z': self.v_slf[:, 2],
-		}
+		if self.category != 'obj':
+			v_slf_polar = cart2polar(self.v_slf)
+			factors = {
+				**factors,
+				'slf_v_norm': v_slf_polar[:, 0],
+				'slf_v_theta': v_slf_polar[:, 1],
+				'slf_v_phi': v_slf_polar[:, 2],
+			}
+			factors_aux = {
+				'slf_v_x': self.v_slf[:, 0],
+				'slf_v_y': self.v_slf[:, 1],
+				'slf_v_z': self.v_slf[:, 2],
+			}
+		else:
+			factors_aux = {}
 		for i, obj in self.objects.items():
-			v_obj_polar = cart2polar(obj.v)
 			factors = {
 				**factors,
 				f'obj{i}_alpha_x': obj.alpha[:, 0],
 				f'obj{i}_alpha_y': obj.alpha[:, 1],
-				f'obj{i}_dist': obj.r[:, 0],
-				f'obj{i}_v_mag': v_obj_polar[:, 0],
-				f'obj{i}_v_theta': v_obj_polar[:, 1],
-				f'obj{i}_v_phi': v_obj_polar[:, 2],
+				f'obj{i}_distance': obj.r[:, 0],
 			}
 			delta_x = obj.pos - self.fix
-			delta_v = obj.v - self.v_slf
-			dv_polar = cart2polar(delta_v)
 			factors_aux = {
 				**factors_aux,
-
-				f'obj{i}_v_x': obj.v[:, 0],
-				f'obj{i}_v_y': obj.v[:, 1],
-				f'obj{i}_v_z': obj.v[:, 2],
-
 				f'obj{i}_size': obj.size,
 				f'obj{i}_theta': obj.r[:, 1],
 				f'obj{i}_phi': obj.r[:, 2],
-
 				f'obj{i}_x': obj.pos[:, 0],
 				f'obj{i}_y': obj.pos[:, 1],
 				f'obj{i}_z': obj.pos[:, 2],
-
 				f'obj{i}_dx': delta_x[:, 0],
 				f'obj{i}_dy': delta_x[:, 1],
 				f'obj{i}_dz': delta_x[:, 2],
-
-				f'obj{i}_dv_x': delta_v[:, 0],
-				f'obj{i}_dv_y': delta_v[:, 1],
-				f'obj{i}_dv_z': delta_v[:, 2],
-
-				f'obj{i}_dv_mag': dv_polar[:, 0],
-				f'obj{i}_dv_theta': dv_polar[:, 1],
-				f'obj{i}_dv_phi': dv_polar[:, 2],
 			}
+			if self.category != 'terrain':
+				v_obj_polar = cart2polar(obj.v)
+				factors = {
+					**factors,
+					f'obj{i}_v_norm': v_obj_polar[:, 0],
+					f'obj{i}_v_theta': v_obj_polar[:, 1],
+					f'obj{i}_v_phi': v_obj_polar[:, 2],
+				}
+				factors_aux = {
+					**factors_aux,
+					f'obj{i}_v_x': obj.v[:, 0],
+					f'obj{i}_v_y': obj.v[:, 1],
+					f'obj{i}_v_z': obj.v[:, 2],
+				}
+			if self.category not in ['obj', 'terrain']:
+				delta_v = obj.v - self.v_slf
+				dv_polar = cart2polar(delta_v)
+				factors_aux = {
+					**factors_aux,
+					f'obj{i}_dv_x': delta_v[:, 0],
+					f'obj{i}_dv_y': delta_v[:, 1],
+					f'obj{i}_dv_z': delta_v[:, 2],
+					f'obj{i}_dv_norm': dv_polar[:, 0],
+					f'obj{i}_dv_theta': dv_polar[:, 1],
+					f'obj{i}_dv_phi': dv_polar[:, 2],
+				}
 		f, f_aux = map(
 			lambda d: list(d.keys()),
 			[factors, factors_aux],
@@ -129,16 +140,21 @@ class OpticFlow(object):
 		)
 		return f, g, f_aux, g_aux
 
-	def filter(self, min_obj_size: int):
+	def filter(
+			self,
+			min_obj_size: int = 6,
+			min_n_obj: int = None, ):
 		if self.n_obj == 0:
 			return np.ones(self.n, dtype=bool)
+		if min_n_obj is None:
+			min_n_obj = self.n_obj
 		min_obj_size /= self.dim ** 2
 		accepted = [
 			obj.size > min_obj_size for
 			obj in self.objects.values()
 		]
-		accepted = functools.reduce(
-			np.logical_and, accepted)
+		accepted = np.stack(accepted).sum(0)
+		accepted = accepted >= min_n_obj
 		return accepted
 
 	def compute_flow(self):
@@ -797,13 +813,15 @@ class HyperFlow(Obj):
 		self.sres = sres
 		self.radius = radius
 
-	def compute_hyperflow(self):
+	def compute_hyperflow(self, transpose: bool = True):
 		dim = tuple(
 			e // self.sres for
 			e in self.size
 		)
 		shape = (-1, ) + dim + (2, )
 		stim = self._hf().reshape(shape)
+		if transpose:
+			stim = np.transpose(stim, (0, -1, 1, 2))
 		return stim
 
 	def show_psd(

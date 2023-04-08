@@ -3,6 +3,8 @@ from torch.nn import functional as F
 from utils.plotting import *
 from vae.config_vae import (
 	ConfigVAE, ConfigTrainVAE)
+from readout.config_readout import (
+	ConfigReadout, ConfigTrainReadout)
 
 
 def beta_anneal_cosine(

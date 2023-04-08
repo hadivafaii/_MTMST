@@ -53,7 +53,7 @@ class TrainerVAE(BaseTrainer):
 				n_iters=self.n_iters,
 				beta=self.cfg.lambda_norm,
 				anneal_portion=2*self.cfg.kl_anneal_portion,
-				constant_portion=100*self.cfg.kl_const_portion,
+				constant_portion=1000*self.cfg.kl_const_portion,
 				min_beta=self.cfg.lambda_init,
 			)
 		else:

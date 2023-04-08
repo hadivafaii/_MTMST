@@ -5,6 +5,20 @@ from sklearn import linear_model as sk_linear
 from sklearn import model_selection as sk_modselect
 
 
+def max_r2(responses: np.ndarray):
+	"""
+	:param responses: shape = nc, ntrials, nt
+	:return: maximum attainable r2 score
+	"""
+	n_trials = responses.shape[1]
+	response_power = responses.mean(1).var(-1)
+	signal_power = (
+			n_trials * response_power -
+			responses.var(-1).mean(1)
+	) / (n_trials - 1)
+	return signal_power / response_power
+
+
 def discrete_mutual_info(
 		z: np.ndarray,
 		g: np.ndarray,

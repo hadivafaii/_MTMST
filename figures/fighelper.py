@@ -173,6 +173,7 @@ def plot_latents_hist(
 
 def plot_opticflow_hist(
 		x: np.ndarray,
+		val: float = 5.0,
 		display: bool = True, ):
 	rho, theta = vel2polar(x)
 	fig, axes = create_figure(
@@ -221,13 +222,14 @@ def plot_opticflow_hist(
 		ax.set_ylabel('')
 		ax.legend(fontsize=15, loc='upper right')
 	for ax in axes[0, :2].flat:
-		ax.axvline(1, color='r', ls='--', lw=1.2)
-	axes[0, 2].axvline(0, color='r', ls='--', lw=1.2)
+		ax.axvline(val, color='r', ls='--', lw=1.2)
+	axes[0, 2].axvline(np.log(val), color='r', ls='--', lw=1.2)
 	axes[0, 0].set_ylabel('[%]', fontsize=15)
 	axes[1, 0].set_ylabel('[%]', fontsize=15)
 	axes[0, 1].set_yscale('log')
-	axes[0, 2].set_xlim(-10, 2)
+	axes[0, 2].set_xlim(-10, 2 + np.log(val))
 	axes[1, 0].set_xlim(left=0)
+	axes[1, 2].set_xlim(-val, val)
 	if display:
 		plt.show()
 	else:
