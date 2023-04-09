@@ -388,7 +388,13 @@ class VAE(Module):
 		else:
 			self.dec_tower = []
 			if self.cfg.compress:
-				raise NotImplementedError
+				self.stem_decoder = DeConv2D(
+					in_channels=self.cfg.n_latent_per_group,
+					out_channels=int(mult * self.n_ch),
+					kernel_size=self.scales[-1],
+					apply_norm=True,
+					normalize_dim=1,
+				)
 			else:
 				self.stem_decoder = Conv2D(
 					in_channels=self.cfg.n_latent_per_group,

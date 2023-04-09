@@ -215,25 +215,30 @@ def compute_sta(
 		good: np.ndarray,
 		stim: np.ndarray,
 		spks: np.ndarray,
-		verbose: bool = False,
-		normalize: bool = True, ):
+		zscore: bool = True,
+		verbose: bool = False, ):
 	assert lags >= 0
 	shape = stim.shape
 	nc = spks.shape[-1]
 	sta = np.zeros((nc, lags+1) + shape[1:])
 	shape = (nc,) + (1,) * len(shape)
-
+	if zscore:
+		mu = stim.mean(0, keepdims=True)
+		sd = stim.std(0, keepdims=True)
+	else:
+		mu, sd = None, None
 	idxs = good.copy()
 	idxs = idxs[idxs > lags]
 	for t in tqdm(idxs, disable=not verbose):
 		# zero lags allowed:
 		x = stim[t - lags: t + 1]
+		if zscore:
+			x = (x - mu) / sd
 		x = np.expand_dims(x, 0)
 		x = np.repeat(x, nc, axis=0)
 		y = spks[t].reshape(shape)
 		sta += x * y
-	if normalize:
-		n = spks[idxs].sum(0)
-		n = n.reshape(shape)
-		sta /= n
+	n = spks[idxs].sum(0)
+	n = n.reshape(shape)
+	sta /= n
 	return sta

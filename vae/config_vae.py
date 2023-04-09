@@ -133,7 +133,7 @@ class ConfigTrainVAE(BaseConfigTrain):
 			**kwargs,
 	):
 		defaults = dict(
-			lr=0.002,
+			lr=0.003,
 			epochs=2000,
 			batch_size=500,
 			warmup_portion=0.025,

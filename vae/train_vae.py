@@ -115,14 +115,13 @@ class TrainerVAE(BaseTrainer):
 				).item()
 				grads.update(grad_norm)
 				if grad_norm > self.cfg.grad_clip:
-					self.stats['grad'].append(grad_norm)
-					self.stats['loss'].append(loss.item())
+					self.stats['grad'][gstep] = grad_norm
+					self.stats['loss'][gstep] = loss.item()
 			# update average meters & stats
 			nelbo.update(loss)
 			perdim_kl.update(torch.stack(kl_diag).mean())
 			perdim_epe.update(
 				epe.mean() / self.model.cfg.input_sz**2)
-			self.stats['gamma'].append(to_np(gamma))
 			msg = [
 				f"gstep # {gstep:.3g}",
 				f"nelbo: {nelbo.avg:0.3f}",
@@ -219,6 +218,7 @@ class TrainerVAE(BaseTrainer):
 				}
 				for k, v in to_write.items():
 					self.writer.add_scalar(k, v, gstep)
+					self.stats[k][gstep] = v
 				for k, v in figs.items():
 					self.writer.add_figure(k, v, gstep)
 		return data, loss

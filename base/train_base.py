@@ -16,7 +16,7 @@ class BaseTrainer(object):
 		self.verbose = verbose
 		self.device = torch.device(device)
 		self.model = model.to(self.device).eval()
-		self.stats = collections.defaultdict(list)
+		self.stats = collections.defaultdict(dict)
 		self.scaler = torch.cuda.amp.GradScaler(
 			enabled=self.cfg.use_amp)
 		self.model_ema = None

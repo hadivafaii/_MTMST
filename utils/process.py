@@ -1,5 +1,111 @@
 from .generic import *
-import scipy.io as sio
+from analysis.opticflow import OpticFlow
+
+
+def generate_simulation(
+		category: str,
+		n_obj: int,
+		total: int,
+		kwargs: dict,
+		accept_n: dict,
+		min_obj_size: int,
+		dtype='float32', ):
+	kws = kwargs.copy()
+	kws['category'] = category
+	kws['n_obj'] = n_obj
+	kws['seed'] = 0
+
+	shape = (total, kws['dim'], kws['dim'], 2)
+	alpha_dot = np.empty(shape, dtype=dtype)
+	g_all, g_aux_all = [], []
+
+	cnt = 0
+	while True:
+		# generate
+		of = OpticFlow(**kws).compute_coords()
+		_ = of.compute_flow()
+		# accept
+		min_n_obj = accept_n[n_obj]
+		accept = of.filter(
+			min_obj_size=min_obj_size,
+			min_n_obj=min_n_obj,
+		)
+		f, g, f_aux, g_aux = of.groundtruth_factors()
+		ind = range(cnt, min(cnt + accept.sum(), total))
+		alpha_dot[ind] = of.alpha_dot.astype(dtype)[accept][:len(ind)]
+		g_aux_all.append(g_aux[:, accept])
+		g_all.append(g[:, accept])
+		cnt += accept.sum()
+		if cnt >= total:
+			break
+		kws['seed'] += 1
+
+	g_all, g_aux_all = cat_map([g_all, g_aux_all], axis=-1)
+	g_all, g_aux_all = g_all[:, :total], g_aux_all[:, :total]
+
+	attrs = {
+		'category': of.category,
+		'n_obj': of.n_obj,
+		'dim': of.dim,
+		'fov': of.fov,
+		'res': of.res,
+		'z_bg': of.z_bg,
+		'obj_r': of.obj_r,
+		'obj_bound': of.obj_bound,
+		'obj_zlim': of.obj_zlim,
+		'vlim_obj': of.vlim_obj,
+		'vlim_slf': of.vlim_slf,
+		'residual': of.residual,
+		'seeds': range(kws['seed'] + 1),
+	}
+	return alpha_dot, f, g_all, f_aux, g_aux_all, attrs
+
+
+def save_simulation(
+		save_dir: str,
+		x: np.ndarray,
+		f: List[str],
+		g: np.ndarray,
+		f_aux: List[str],
+		g_aux: np.ndarray,
+		attrs: dict,
+		split: dict = None, ):
+	n = len(x)
+	fname = '_'.join([
+		f"{attrs['category']}{attrs['n_obj']}",
+		f"dim-{attrs['dim']}",
+		f"n-{n:1.2g}.h5",
+	])
+	ff = pjoin(save_dir, fname)
+	ff = h5py.File(ff, 'w')
+	ff.attrs.update(attrs)
+
+	split = split if split else {
+		'trn': int(0.8 * n),
+		'vld': int(0.1 * n),
+		'tst': int(0.1 * n),
+	}
+	assert sum(split.values()) == n
+	i = 0
+	split_ids = {}
+	for k, v in split.items():
+		split_ids[k] = range(i, i + v)
+		i += v
+	for a, b in itertools.combinations(split_ids.values(), 2):
+		assert not set(a).intersection(b)
+
+	string_dt = h5py.string_dtype('utf-8')
+	for label, ids in split_ids.items():
+		grp = ff.create_group(label)
+		grp.create_dataset('f', data=f, dtype=string_dt)
+		grp.create_dataset('g', data=g[:, ids], dtype=float)
+		grp.create_dataset('f_aux', data=f_aux, dtype=string_dt)
+		grp.create_dataset('g_aux', data=g_aux[:, ids], dtype=float)
+		grp.create_dataset('x', data=x[ids], dtype=x.dtype)
+
+	print(f'{fname}\tsaved at\t{save_dir}')
+	ff.close()
+	return
 
 
 def load_cellinfo(load_dir: str):
@@ -27,45 +133,6 @@ def load_cellinfo(load_dir: str):
 	return useful_cells
 
 
-def save_simulation(sim, save_dir, split=None):
-	d, n = sim.alpha_dot.shape[1], sim.num
-	file_name = f"simulation_dim-{d}_{n:1.1g}.h5"
-	ff = pjoin(save_dir, file_name)
-	ff = h5py.File(ff, 'w')
-
-	ff.attrs['dim'] = d
-	for item in ['num', 'fov', 'res', 'ratio']:
-		ff.attrs[item] = getattr(sim, item)
-
-	split = split if split else {
-		'trn': int(0.8 * n),
-		'vld': int(0.15 * n),
-		'tst': int(0.05 * n),
-	}
-	assert sum(split.values()) == n
-	i = 0
-	sp_ids = {}
-	for k, v in split.items():
-		sp_ids[k] = range(i, i + v)
-		i += v
-	for a, b in itertools.combinations(sp_ids.values(), 2):
-		assert not set(a).intersection(b)
-
-	for label, ids in sp_ids.items():
-		g = ff.create_group(label)
-		g.create_dataset('x', data=sim.alpha_dot[ids], dtype=float)
-		for item in ['fix', 'vel_slf', 'vel_obj', 'pos_obj']:
-			if item == 'fix':
-				x = getattr(sim, item)[ids]
-			else:
-				x = getattr(sim, item)[:, ids]
-			g.create_dataset(item, data=x, dtype=float)
-
-	print(f'{file_name}\tsaved at\t{save_dir}')
-	ff.close()
-	return
-
-
 # TODO: fix issue with spkst
 def mat2h5py(
 		load_dir: str,
@@ -73,6 +140,7 @@ def mat2h5py(
 		file_name: str,
 		tres: int = 25,
 		grd: int = 15, ):
+	import scipy.io as sio
 	file_name = f"{file_name}_tres{tres:d}.h5"
 	file_name = pjoin(save_dir, file_name)
 	ff = h5py.File(file_name, 'w')

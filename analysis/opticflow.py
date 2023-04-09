@@ -84,6 +84,7 @@ class OpticFlow(object):
 			}
 		else:
 			factors_aux = {}
+		sizes_eff = self.effective_sizes()
 		for i, obj in self.objects.items():
 			factors = {
 				**factors,
@@ -94,6 +95,7 @@ class OpticFlow(object):
 			delta_x = obj.pos - self.fix
 			factors_aux = {
 				**factors_aux,
+				f'obj{i}_size_eff': sizes_eff[:, i],
 				f'obj{i}_size': obj.size,
 				f'obj{i}_theta': obj.r[:, 1],
 				f'obj{i}_phi': obj.r[:, 2],
@@ -139,6 +141,20 @@ class OpticFlow(object):
 			[factors, factors_aux],
 		)
 		return f, g, f_aux, g_aux
+
+	def effective_sizes(self):
+		if self.n_obj == 0:
+			return None
+		sizes_eff = np.zeros((self.n, self.n_obj))
+		for i in range(self.n):
+			sizes = {
+				k: len(v) / self.dim ** 2 for k, v
+				in unique_idxs(self.z_env[i]).items()
+			}
+			for obj_i, obj in self.objects.items():
+				val = sizes.get(obj.pos[i, 2], 0.0)
+				sizes_eff[i, obj_i] = val
+		return sizes_eff
 
 	def filter(
 			self,
