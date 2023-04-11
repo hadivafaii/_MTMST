@@ -1,20 +1,22 @@
 from utils.plotting import *
 from sklearn import metrics as sk_metric
 from sklearn import neighbors as sk_neigh
+from sklearn import inspection as sk_inspect
 from sklearn import linear_model as sk_linear
+from sklearn import decomposition as sk_decomp
 from sklearn import model_selection as sk_modselect
 
 
-def max_r2(responses: np.ndarray):
+def max_r2(y: np.ndarray):
 	"""
-	:param responses: shape = nc, ntrials, nt
+	:param y: neural responses, shape = (nc, ntrials, nt)
 	:return: maximum attainable r2 score
 	"""
-	n_trials = responses.shape[1]
-	response_power = responses.mean(1).var(-1)
+	n_trials = y.shape[1]
+	response_power = np.nanvar(np.nanmean(y, 1), -1)
 	signal_power = (
 			n_trials * response_power -
-			responses.var(-1).mean(1)
+			np.nanmean(np.nanvar(y, -1), 1)
 	) / (n_trials - 1)
 	return signal_power / response_power
 
@@ -193,15 +195,8 @@ def polar2cart(r: np.ndarray):
 
 
 class Obj(object):
-	def __init__(
-			self,
-			name: str = None,
-			tres: int = 25,
-			verbose: bool = False,
-	):
+	def __init__(self, verbose: bool = False):
 		super(Obj, self).__init__()
-		self.name = name
-		self.tres = tres
 		self.verbose = verbose
 		self.datetime = now(True)
 

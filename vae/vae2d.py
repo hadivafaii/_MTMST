@@ -260,8 +260,8 @@ class VAE(Module):
 
 		# multiply with num channels per scale
 		for i, s in enumerate(self.scales, start=1):
-			n_ftrs_enc[s] *= self.n_ch * i * MULT
-			n_ftrs_dec[s] *= self.n_ch * i * MULT
+			n_ftrs_enc[s] *= self.cfg.n_ch * i * MULT
+			n_ftrs_dec[s] *= self.cfg.n_ch * i * MULT
 
 		return dict(n_ftrs_enc), dict(n_ftrs_dec)
 
@@ -390,7 +390,7 @@ class VAE(Module):
 			if self.cfg.compress:
 				self.stem_decoder = DeConv2D(
 					in_channels=self.cfg.n_latent_per_group,
-					out_channels=int(mult * self.n_ch),
+					out_channels=int(mult * self.cfg.n_ch),
 					kernel_size=self.scales[-1],
 					apply_norm=True,
 					normalize_dim=1,
@@ -398,7 +398,7 @@ class VAE(Module):
 			else:
 				self.stem_decoder = Conv2D(
 					in_channels=self.cfg.n_latent_per_group,
-					out_channels=int(mult * self.n_ch),
+					out_channels=int(mult * self.cfg.n_ch),
 					kernel_size=1,
 				)
 		mult = self._init_post(mult)
@@ -408,7 +408,6 @@ class VAE(Module):
 		return
 
 	def _init_sizes(self):
-		self.n_ch = self.cfg.n_kers * self.cfg.n_rots
 		input_sz = self.cfg.input_sz - self.cfg.ker_sz + 1
 		self.scales = [
 			input_sz // MULT ** (i + self.cfg.n_pre_blocks)
@@ -417,7 +416,7 @@ class VAE(Module):
 		self.z0_sz = [self.cfg.n_latent_per_group]
 		self.z0_sz += [1 if self.cfg.compress else self.scales[-1]] * 2
 		prior_ftr0_sz = [
-			input_sz // self.scales[-1] * self.n_ch,
+			input_sz // self.scales[-1] * self.cfg.n_ch,
 			self.scales[-1],
 			self.scales[-1],
 		]
@@ -428,20 +427,12 @@ class VAE(Module):
 		return
 
 	def _init_stem(self):
-		if self.cfg.rot_equiv:
-			self.stem = RotConv2d(
-				co=self.cfg.n_kers,
-				n_rots=self.cfg.n_rots,
-				kernel_size=self.cfg.ker_sz,
-				bias=True,
-			)
-		else:
-			self.stem = Conv2D(
-				in_channels=2,
-				out_channels=self.cfg.n_kers * self.cfg.n_rots,
-				kernel_size=self.cfg.ker_sz,
-				padding='valid',
-			)
+		self.stem = Conv2D(
+			in_channels=2,
+			out_channels=self.cfg.n_ch,
+			kernel_size=self.cfg.ker_sz,
+			padding='valid',
+		)
 		return
 
 	def _init_pre(self, mult, depth):
@@ -451,7 +442,7 @@ class VAE(Module):
 			range(self.cfg.n_pre_cells),
 		)
 		for _, c in looper:
-			ch = int(self.n_ch * mult)
+			ch = int(self.cfg.n_ch * mult)
 			if self.cfg.scale_init:
 				self.kws['scale'] = 1 / np.sqrt(depth)
 			if c == self.cfg.n_pre_cells - 1:
@@ -480,7 +471,7 @@ class VAE(Module):
 	def _init_enc(self, mult, depth):
 		enc = nn.ModuleList()
 		for s in range(self.cfg.n_latent_scales):
-			ch = int(self.n_ch * mult)
+			ch = int(self.cfg.n_ch * mult)
 			for g in range(self.cfg.groups[s]):
 				for _ in range(self.cfg.n_enc_cells):
 					if self.cfg.scale_init:
@@ -519,7 +510,7 @@ class VAE(Module):
 		return mult
 
 	def _init_enc0(self, mult):
-		ch = int(self.n_ch * mult)
+		ch = int(self.cfg.n_ch * mult)
 		kws = dict(
 			in_channels=ch,
 			out_channels=ch,
@@ -545,7 +536,7 @@ class VAE(Module):
 		for s in range(self.cfg.n_latent_scales):
 			s_inv = self.cfg.n_latent_scales - s - 1
 			kws['spatial_dim'] = self.scales[s_inv]
-			kws['in_channels'] = int(self.n_ch * mult)
+			kws['in_channels'] = int(self.cfg.n_ch * mult)
 			for g in range(self.cfg.groups[s_inv]):
 				if self.cfg.compress:
 					expand.append(DeConv2D(
@@ -574,7 +565,7 @@ class VAE(Module):
 	def _init_dec(self, mult):
 		dec = nn.ModuleList()
 		for s in range(self.cfg.n_latent_scales):
-			ch = int(self.n_ch * mult)
+			ch = int(self.cfg.n_ch * mult)
 			s_inv = self.cfg.n_latent_scales - s - 1
 			for g in range(self.cfg.groups[s_inv]):
 				if not (s == 0 and g == 0):
@@ -615,7 +606,7 @@ class VAE(Module):
 			range(self.cfg.n_post_cells),
 		)
 		for b, c in looper:
-			ch = int(self.n_ch * mult)
+			ch = int(self.cfg.n_ch * mult)
 			if c == 0:
 				co = int(ch / MULT)
 				cell = Cell(
@@ -644,7 +635,7 @@ class VAE(Module):
 
 	def _init_output(self, mult):
 		kws = dict(
-			in_channels=int(self.n_ch * mult),
+			in_channels=int(self.cfg.n_ch * mult),
 			out_channels=2,
 			kernel_size=3,
 			padding=1,

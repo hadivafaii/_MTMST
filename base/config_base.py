@@ -12,7 +12,7 @@ class BaseConfig(object):
 			full: bool = False,
 			save: bool = False,
 			h_file: str = 'MTLFP_tres25',
-			h_pre: str = 'simulation_dim-19_5e+04',
+			sim_path: str = 'fixate1_dim-65_n-750k',
 			base_dir: str = 'Documents/MTMST',
 	):
 		super(BaseConfig, self).__init__()
@@ -23,7 +23,7 @@ class BaseConfig(object):
 			self.save_dir = pjoin(self.base_dir, 'models', name)
 			self.data_dir = pjoin(self.base_dir, 'data')
 			self.h_file = pjoin(self.data_dir, f"{h_file}.h5")
-			self.h_pre = pjoin(self.data_dir, f"{h_pre}.h5")
+			self.sim_path = pjoin(self.data_dir, sim_path)
 			self._mkdirs()
 			self._load_cellinfo()
 			self.seed = seed
@@ -108,7 +108,7 @@ class BaseConfigTrain(object):
 	def _set_optim_kws(self, kws):
 		defaults = {
 			'betas': (0.9, 0.999),
-			'weight_decay': 1e-4,
+			'weight_decay': 3e-4,
 			'eps': 1e-8,
 		}
 		kws = setup_kwargs(defaults, kws)

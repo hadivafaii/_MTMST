@@ -4,10 +4,10 @@ from base.config_base import *
 class ConfigVAE(BaseConfig):
 	def __init__(
 			self,
-			n_kers: int = 4,
-			n_rots: int = 8,
-			ker_sz: int = 4,
-			input_sz: int = 19,
+			sim: str,
+			n_ch: int = 32,
+			ker_sz: int = 2,
+			input_sz: int = 65,
 			n_enc_cells: int = 2,
 			n_enc_nodes: int = 2,
 			n_dec_cells: int = 2,
@@ -16,14 +16,13 @@ class ConfigVAE(BaseConfig):
 			n_pre_blocks: int = 1,
 			n_post_cells: int = 3,
 			n_post_blocks: int = 1,
-			n_latent_scales: int = 3,
-			n_groups_per_scale: int = 4,
-			n_latent_per_group: int = 5,
+			n_latent_scales: int = 2,
+			n_latent_per_group: int = 7,
+			n_groups_per_scale: int = 20,
 			activation_fn: str = 'swish',
 			balanced_recon: bool = True,
 			residual_kl: bool = True,
 			scale_init: bool = False,
-			rot_equiv: bool = False,
 			ada_groups: bool = True,
 			spectral_norm: int = 0,
 			separable: bool = False,
@@ -33,8 +32,8 @@ class ConfigVAE(BaseConfig):
 			full: bool = True,
 			**kwargs,
 	):
-		self.n_kers = n_kers
-		self.n_rots = n_rots
+		self.sim = sim
+		self.n_ch = n_ch
 		self.ker_sz = ker_sz
 		self.input_sz = input_sz
 		self.n_enc_cells = n_enc_cells
@@ -46,10 +45,9 @@ class ConfigVAE(BaseConfig):
 		self.n_post_cells = n_post_cells
 		self.n_post_blocks = n_post_blocks
 		self.n_latent_scales = n_latent_scales
-		self.n_groups_per_scale = n_groups_per_scale
 		self.n_latent_per_group = n_latent_per_group
+		self.n_groups_per_scale = n_groups_per_scale
 		self.spectral_norm = spectral_norm
-		self.rot_equiv = rot_equiv
 		self.separable = separable
 		self.compress = compress
 		self.use_bn = use_bn
@@ -59,6 +57,7 @@ class ConfigVAE(BaseConfig):
 			is_adaptive=ada_groups,
 		)
 		super(ConfigVAE, self).__init__(
+			sim_path=f"{sim}_dim-65_n-750k",
 			name=self.name(),
 			full=full,
 			**kwargs,
@@ -72,11 +71,8 @@ class ConfigVAE(BaseConfig):
 
 	def name(self):
 		name = [
-			'x'.join([
-				f"k-{self.n_kers}",
-				str(self.n_rots),
-			]).replace(' ', '') if self.rot_equiv
-			else f"k-{self.n_kers * self.n_rots}",
+			str(self.sim),
+			f"k-{self.n_ch}",
 			'x'.join([
 				f"z-{self.n_latent_per_group}",
 				str(list(reversed(self.groups))),
@@ -103,8 +99,6 @@ class ConfigVAE(BaseConfig):
 		name = '_'.join(name)
 		if self.spectral_norm:
 			name = f"{name}_sn-{self.spectral_norm}"
-		if self.rot_equiv:
-			name = f"{name}_rot"
 		if self.separable:
 			name = f"{name}_sep"
 		if not self.compress:

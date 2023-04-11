@@ -3,80 +3,53 @@ from analysis.opticflow import HyperFlow
 from torch.utils.data.dataset import Dataset
 
 
+# noinspection PyUnresolvedReferences
 class ROFL(Dataset):
-	def __init__(
-			self,
-			g: h5py.Group,
-			device: torch.device = None,
-			transform=None,
-	):
-		self._init_factors(g)
-		x = np.array(g['x'], dtype=float)
-		self.x = np.transpose(
-			x, (0, 3, 1, 2))
+	def __init__(self, path: str, mode: str):
+
+		# attributes
+		self.attrs = np.load(
+			pjoin(path, 'attrs.npy'),
+			allow_pickle=True,
+		).item()
+		self.f = self.attrs.pop('f')
+		self.f_aux = self.attrs.pop('f_aux')
+
+		# mode = trn/vld/tst
+		path = pjoin(path, mode)
+
+		# generative factors
+		self.g = np.load(
+			pjoin(path, 'g.npy'),
+			mmap_mode='r',
+		).astype(float)
+		self.g_aux = np.load(
+			pjoin(path, 'g_aux.npy'),
+			mmap_mode='r',
+		).astype(float)
+
+		# data
+		self.x = np.load(
+			pjoin(path, 'x.npy'),
+			mmap_mode='r',
+		).astype('float32')
 		self.norm = sp_lin.norm(
-			x, axis=-1).sum(-1).sum(-1)
-		if device is not None:
-			self.x = torch.tensor(
-				data=self.x,
-				device=device,
-				dtype=torch.float,
-			)
-			self.norm = torch.tensor(
-				data=self.norm,
-				device=device,
-				dtype=torch.float,
-			)
-		self.transform = transform
+			self.x, axis=1).sum(-1).sum(-1)
 
 	def __len__(self):
 		return len(self.x)
 
 	def __getitem__(self, i):
-		x = self.x[i]
-		n = self.norm[i]
-		if self.transform is not None:
-			x = self.transform(x)
-		return x, n
-
-	def _init_factors(self, g):
-		fix = np.array(g['fix'], dtype=float)
-		vel_slf = np.array(g['vel_slf'], dtype=float)
-		vel_obj = np.array(g['vel_obj'], dtype=float)
-		pos_obj = np.array(g['pos_obj'], dtype=float)
-		pos_obj[0] -= fix[:, 0]
-		pos_obj[1] -= fix[:, 1]
-		factors = np_nans((len(fix), 11))
-		factors[:, :2] = fix
-		factors[:, 2:5] = vel_slf.T
-		factors[:, 5:8] = vel_obj.T
-		factors[:, 8:11] = pos_obj.T
-		assert not np.isnan(factors).sum()
-		self.factors = factors
-		self.factor_names = {
-			0: 'fix_x',
-			1: 'fix_y',
-			2: 'v_self_x',
-			3: 'v_self_y',
-			4: 'v_self_z',
-			5: 'v_obj_x',
-			6: 'v_obj_y',
-			7: 'v_obj_z',
-			8: 'pos_obj_x',
-			9: 'pos_obj_y',
-			10: 'pos_obj_z',
-		}
-		return
+		return self.x[i], self.norm[i]
 
 
 def setup_repeat_data(
 		group: h5py.Group,
-		lags: int = 24,
-		hf_kws: dict = None,
+		kws_hf: dict = None,
 		use_hf: bool = True, ):
 	if 'repeats' not in group:
 		return None, None, None
-	hf_kws = hf_kws if hf_kws else {
+	kws_hf = kws_hf if kws_hf else {
 		'size': 32,
 		'sres': 1,
 		'radius': 8,
@@ -88,21 +61,21 @@ def setup_repeat_data(
 	assert (tstart == tstart[0]).all()
 	tstart = tstart[0]
 	nc, _, length = psth.shape
+	intvl = range(tstart[1], tstart[1] + length)
+	intvl = np.array(intvl)
 
 	# stim
 	if use_hf:
 		hf = HyperFlow(
 			params=np.array(group['hyperflowR'])[:, 2:],
 			center=np.array(group['hyperflowR'])[:, :2],
-			**hf_kws,
+			**kws_hf,
 		)
 		stim = hf.compute_hyperflow()
 	else:
 		stim = np.array(group['stimR'], dtype=float)
-	intvl = range(tstart[1], tstart[1] + length)
-	intvl = np.array(intvl)
-	if lags is not None:
-		stim = time_embed(stim, lags, intvl)
+	stim = stim[range(max(intvl))]
+
 	# spks
 	_spks = np.array(group['spksR'], dtype=float)
 	spks = np_nans(psth.shape)
@@ -111,6 +84,7 @@ def setup_repeat_data(
 			s_ = range(t, t + length)
 			spks[i][trial] = _spks[:, i][s_]
 	spks[badspks] = np.nan
+
 	return stim, spks, intvl
 
 
@@ -137,3 +111,97 @@ def time_embed(x, lags, idxs=None):
 		x_emb.append(np.expand_dims(
 			x[t - lags: t], axis=0))
 	return np.concatenate(x_emb)
+
+
+def _setup_args() -> argparse.Namespace:
+	parser = argparse.ArgumentParser()
+
+	parser.add_argument(
+		"n_tot",
+		help='# frames total',
+		type=int,
+	)
+	parser.add_argument(
+		"--n_batch",
+		help='# frames per batch',
+		type=int,
+		default=int(1e4),
+	)
+	parser.add_argument(
+		"--dim",
+		help='dimensionality',
+		type=int,
+		default=65,
+	)
+	parser.add_argument(
+		"--min_obj_size",
+		help='minimum acceptable object size',
+		type=int,
+		default=6,
+	)
+	parser.add_argument(
+		"--dtype",
+		help='dtype for alpha_dot',
+		type=str,
+		default='float32',
+	)
+	return parser.parse_args()
+
+
+def _main():
+	args = _setup_args()
+	print(args)
+
+	kws = dict(
+		n=args.n_batch,
+		dim=args.dim,
+		fov=45.0,
+		obj_r=0.2,
+		obj_bound=0.97,
+		obj_zlim=(0.5, 1.0),
+		vlim_obj=(0.01, 5.0),
+		vlim_slf=(0.01, 5.0),
+		residual=False,
+		z_bg=1.0,
+		seed=0,
+	)
+	accept_n = {
+		0: None,
+		1: None,
+		2: None,
+		4: 3,
+		8: 7,
+		16: 14,
+	}
+	combos = [('fixate', i) for i in [0, 1, 2, 4, 8]]
+	combos += [('terrain', i) for i in [4, 8, 16]]
+	combos += [('transl', i) for i in [0, 2, 4]]
+	combos += [('obj', i) for i in [1, 2, 4, 8]]
+
+	from utils.process import generate_simulation, save_simulation
+	save_dir = '/home/hadi/Documents/MTMST/data'
+	pbar = tqdm(combos)
+	for category, n_obj in pbar:
+		pbar.set_description(f"creating {category}{n_obj}")
+		alpha_dot, g, g_aux, attrs = generate_simulation(
+			total=args.n_tot,
+			category=category,
+			n_obj=n_obj,
+			kwargs=kws,
+			accept_n=accept_n,
+			min_obj_size=args.min_obj_size,
+			dtype=args.dtype,
+		)
+		save_simulation(
+			save_dir=save_dir,
+			x=alpha_dot,
+			g=g,
+			g_aux=g_aux,
+			attrs=attrs,
+		)
+	print(f"\n[PROGRESS] saving datasets done {now(True)}.\n")
+	return
+
+
+if __name__ == "__main__":
+	_main()

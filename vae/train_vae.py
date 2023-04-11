@@ -405,17 +405,15 @@ class TrainerVAE(BaseTrainer):
 		# figs['fig/hist_x_sample'] = fig
 		return x_sample, z_sample, regr, figs
 
-	def setup_data(self, gpu: bool = True):
+	def setup_data(self):
 		# create datasets
-		f = h5py.File(self.model.cfg.h_pre)
-		device = self.device if gpu else None
-		ds_trn = ROFL(f['trn'], device=device)
-		ds_vld = ROFL(f['vld'], device=device)
-		ds_tst = ROFL(f['tst'], device=device)
-		f.close()
+		ds_trn = ROFL(self.model.cfg.sim_path, 'trn')
+		ds_vld = ROFL(self.model.cfg.sim_path, 'vld')
+		ds_tst = ROFL(self.model.cfg.sim_path, 'tst')
 		# cleate dataloaders
 		kws = dict(
 			batch_size=self.cfg.batch_size,
+			pin_memory=True,
 			drop_last=True,
 			shuffle=True,
 		)
@@ -424,3 +422,236 @@ class TrainerVAE(BaseTrainer):
 		self.dl_vld = DataLoader(ds_vld, **kws)
 		self.dl_tst = DataLoader(ds_tst, **kws)
 		return
+
+
+def _setup_args() -> argparse.Namespace:
+	parser = argparse.ArgumentParser()
+
+	parser.add_argument(
+		"category",
+		help='stimulus category',
+		type=float,
+	)
+	parser.add_argument(
+		"n_obj",
+		help='number of objects',
+		type=int,
+	)
+	parser.add_argument(
+		"device",
+		help='cuda:n',
+		type=str,
+	)
+	parser.add_argument(
+		"--n_ch",
+		help='# channels',
+		type=int,
+		default=32,
+	)
+	# enc
+	parser.add_argument(
+		"--n_enc_cells",
+		help='# enc cells',
+		type=int,
+		default=2,
+	)
+	parser.add_argument(
+		"--n_enc_nodes",
+		help='# enc nodes',
+		type=int,
+		default=2,
+	)
+	# dec
+	parser.add_argument(
+		"--n_dec_cells",
+		help='# dec cells',
+		type=int,
+		default=2,
+	)
+	parser.add_argument(
+		"--n_dec_nodes",
+		help='# dec nodes',
+		type=int,
+		default=1,
+	)
+	# pre
+	parser.add_argument(
+		"--n_pre_cells",
+		help='# preprocessing cells',
+		type=int,
+		default=3,
+	)
+	parser.add_argument(
+		"--n_pre_blocks",
+		help='# preprocessing blocks',
+		type=int,
+		default=1,
+	)
+	# post
+	parser.add_argument(
+		"--n_post_cells",
+		help='# postprocessing cells',
+		type=int,
+		default=3,
+	)
+	parser.add_argument(
+		"--n_post_blocks",
+		help='# postprocessing blocks',
+		type=int,
+		default=1,
+	)
+	# latents
+	parser.add_argument(
+		"--n_latent_scales",
+		help='# latent scales',
+		type=int,
+		default=2,
+	)
+	parser.add_argument(
+		"--n_latent_per_group",
+		help='# latents per group',
+		type=int,
+		default=7,
+	)
+	parser.add_argument(
+		"--n_groups_per_scale",
+		help='# groups per scale',
+		type=int,
+		default=20,
+	)
+	parser.add_argument(
+		"--spectral_norm",
+		help='spectral norm (0 = disable)',
+		type=int,
+		default=0,
+	)
+	parser.add_argument(
+		"--ada_groups",
+		help='adaptive latent groups',
+		action='store_true',
+		default=True,
+	)
+	parser.add_argument(
+		"--compress",
+		help='compress latent space',
+		action='store_true',
+		default=True,
+	)
+	# training
+	parser.add_argument(
+		"--kl_beta",
+		help='kl loss beta coefficient',
+		type=float,
+		default=1.0,
+	)
+	parser.add_argument(
+		"--lr",
+		help='learning rate',
+		type=float,
+		default=0.003,
+	)
+	parser.add_argument(
+		"--lr_min",
+		help='min learning rate',
+		type=float,
+		default=1e-5,
+	)
+	parser.add_argument(
+		"--epochs",
+		help='# epochs',
+		type=int,
+		default=2000,
+	)
+	parser.add_argument(
+		"--batch_size",
+		help='batch size',
+		type=int,
+		default=500,
+	)
+	parser.add_argument(
+		"--warmup",
+		help='warmup portion',
+		type=float,
+		default=0.025,
+	)
+	parser.add_argument(
+		"--optimizer",
+		help='optimizer',
+		type=str,
+		default='adamax_fast',
+	)
+	parser.add_argument(
+		"--period",
+		help='scheduler period',
+		type=float,
+		default=650.0,
+	)
+	parser.add_argument(
+		"--lambda_norm",
+		help='weight regularization strength',
+		type=float,
+		default=1e-4,
+	)
+	parser.add_argument(
+		"--grad_clip",
+		help='gradient norm clipping',
+		type=float,
+		default=1000.0,
+	)
+	return parser.parse_args()
+
+
+def _main():
+	args = _setup_args()
+	print(args)
+
+	vae = VAE(ConfigVAE(
+		sim=f"{args.category}{args.n_obj}_dim-65_n-750k",
+		n_ch=args.n_ch,
+		n_enc_cells=args.n_enc_cells,
+		n_enc_nodes=args.n_enc_nodes,
+		n_dec_cells=args.n_dec_cells,
+		n_dec_nodes=args.n_dec_nodes,
+		n_pre_cells=args.n_pre_cells,
+		n_pre_blocks=args.n_pre_blocks,
+		n_post_cells=args.n_post_cells,
+		n_post_blocks=args.n_post_blocks,
+		n_latent_scales=args.n_latent_scales,
+		n_latent_per_group=args.n_latent_per_group,
+		n_groups_per_scale=args.n_groups_per_scale,
+		spectral_norm=args.spectral_norm,
+		ada_groups=args.ada_groups,
+		compress=args.compress,
+		balanced_recon=True,
+		residual_kl=True,
+		scale_init=False,
+	))
+	tr = TrainerVAE(
+		model=vae,
+		device=args.device,
+		cfg=ConfigTrainVAE(
+			lr=args.lr,
+			epochs=args.epochs,
+			batch_size=args.batch_size,
+			warmup_portion=args.warmup,
+			optimizer=args.optimizer,
+			grad_clip=args.grad_clip,
+			scheduler_kws={
+				'T_max': args.period,
+				'eta_min': args.lr_min},
+			# kl
+			kl_beta=args.kl_beta,
+			kl_anneal_cycles=1,
+			kl_anneal_portion=0.3,
+			kl_const_portion=1e-4,
+			# weight reg
+			lambda_norm=args.lambda_norm,
+			lambda_anneal=True,
+			lambda_init=1e-7),
+	)
+	print(f"\n[PROGRESS] fitting VAE done {now(True)}.\n")
+	return
+
+
+if __name__ == "__main__":
+	_main()

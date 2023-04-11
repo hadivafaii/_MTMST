@@ -3,19 +3,12 @@ from .opticflow import VelField
 from sklearn.feature_selection import mutual_info_regression
 
 
-def regress(
+def mi_analysis(
 		z: np.ndarray,
 		g: np.ndarray,
-		z_tst: np.ndarray,
-		g_tst: np.ndarray,
 		n_bins: int = 20,
-		process: bool = True,
 		parallel: bool = True,
-		n_jobs: int = -1, ):
-	if process:
-		mu, sd = z.mean(), z.std()
-		z = (z - mu) / sd
-		z_tst = (z_tst - mu) / sd
+		n_jobs: int = -1,):
 	# mi regression
 	if parallel:
 		with joblib.parallel_backend('multiprocessing'):
@@ -37,6 +30,24 @@ def regress(
 		parallel=parallel,
 		n_jobs=n_jobs,
 	)
+	output = {
+		'mi': mi,
+		'mi_norm': mi_normalized,
+		'mig': compute_mig(mi_normalized),
+	}
+	return output
+
+
+def regress(
+		z: np.ndarray,
+		g: np.ndarray,
+		z_tst: np.ndarray,
+		g_tst: np.ndarray,
+		process: bool = True, ):
+	if process:
+		mu, sd = z.mean(), z.std()
+		z = (z - mu) / sd
+		z_tst = (z_tst - mu) / sd
 	# linear regression
 	lr = sk_linear.LinearRegression().fit(z, g)
 	g_pred = lr.predict(z_tst)
@@ -45,19 +56,15 @@ def regress(
 	w *= z.std(0).reshape(1, -1)
 	w /= g.std(0).reshape(-1, 1)
 	d, c = compute_dci(w)
-
 	output = {
-		'mi': mi,
-		'mi_norm': mi_normalized,
-		'mig': compute_mig(mi_normalized),
-		'r': 1 - sp_dist.cdist(
-			XA=g_tst.T,
-			XB=g_pred.T,
-			metric='correlation'),
 		'r2': sk_metric.r2_score(
 			y_true=g_tst,
 			y_pred=g_pred,
 			multioutput='raw_values'),
+		'r': 1 - sp_dist.cdist(
+			XA=g_tst.T,
+			XB=g_pred.T,
+			metric='correlation'),
 		'd': d,
 		'c': c,
 	}
@@ -141,7 +148,8 @@ class LinearModel(Obj):
 		kwargs = setup_kwargs(self.defaults, kwargs)
 		for a in self.alphas:
 			kwargs['alpha'] = a
-			model = self.fn(**kwargs).fit(flatten_stim(self.x), self.y)
+			model = self.fn(**kwargs)
+			model.fit(flatten_stim(self.x), self.y)
 			kernel = model.coef_.reshape(self.x.shape[1:])
 			try:
 				self.kers[a] = VelField(kernel)
@@ -178,7 +186,8 @@ class LinearModel(Obj):
 	def _fit_folds(self, **kwargs):
 		nnll, r, r2 = [], [], []
 		for trn, vld in self.kf.split(self.x):
-			model = self.fn(**kwargs).fit(
+			model = self.fn(**kwargs)
+			model.fit(
 				X=flatten_stim(self.x[trn]),
 				y=self.y[trn],
 			)
@@ -192,10 +201,10 @@ class LinearModel(Obj):
 				r2.append(None)
 		return nnll, r2, r
 
-	def show_pred(self):
+	def show_pred(self, figsize=(7, 3.5)):
 		if not self.r2_tst:
 			return
-		fig, ax = create_figure(1, 1, (7, 3.5))
+		fig, ax = create_figure(1, 1, figsize)
 		ax.plot(self.y_tst, lw=1.8, color='k', label='true')
 		for i, (a, r2) in enumerate(self.r2_tst.items()):
 			lbl = r"$R^2 = $" + f"{r2:0.1f}%  ("

@@ -137,7 +137,7 @@ class OpticFlow(object):
 			[factors, factors_aux],
 		)
 		g, g_aux = map(
-			lambda d: np.stack(list(d.values())),
+			lambda d: np.stack(list(d.values())).T,
 			[factors, factors_aux],
 		)
 		return f, g, f_aux, g_aux
@@ -812,8 +812,9 @@ class HyperFlow(Obj):
 			params: np.ndarray,
 			center: np.ndarray,
 			size: Tuple[int, int],
-			sres: float = 1.0,
-			radius: float = 8.0,
+			radius: float,
+			sres: float = 1,
+			tres: int = 25,
 			**kwargs,
 	):
 		super(HyperFlow, self).__init__(**kwargs)
@@ -826,10 +827,14 @@ class HyperFlow(Obj):
 			size = (size, size)
 		assert len(size) == 2
 		self.size = size
-		self.sres = sres
 		self.radius = radius
+		self.sres = sres
+		self.tres = tres
 
-	def compute_hyperflow(self, transpose: bool = True):
+	def compute_hyperflow(
+			self,
+			dtype: str = 'float32',
+			transpose: bool = True, ):
 		dim = tuple(
 			e // self.sres for
 			e in self.size
@@ -837,8 +842,9 @@ class HyperFlow(Obj):
 		shape = (-1, ) + dim + (2, )
 		stim = self._hf().reshape(shape)
 		if transpose:
-			stim = np.transpose(stim, (0, -1, 1, 2))
-		return stim
+			stim = np.transpose(
+				stim, (0, -1, 1, 2))
+		return stim.astype(dtype)
 
 	def show_psd(
 			self,
@@ -947,12 +953,13 @@ class HyperFlow(Obj):
 
 
 class VelField(Obj):
-	def __init__(self, x, **kwargs):
+	def __init__(self, x, tres: int = 25, **kwargs):
 		super(VelField, self).__init__(**kwargs)
-		self._setup(x)
+		self._init(x)
+		self.tres = tres
 		self.compute_svd()
 
-	def _setup(self, x: np.ndarray):
+	def _init(self, x: np.ndarray):
 		if x.ndim == 4:
 			x = np.expand_dims(x, 0)
 		assert x.ndim == 5 and x.shape[-1] == 2

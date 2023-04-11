@@ -33,17 +33,20 @@ def generate_simulation(
 		f, g, f_aux, g_aux = of.groundtruth_factors()
 		ind = range(cnt, min(cnt + accept.sum(), total))
 		alpha_dot[ind] = of.alpha_dot.astype(dtype)[accept][:len(ind)]
-		g_aux_all.append(g_aux[:, accept])
-		g_all.append(g[:, accept])
+		g_aux_all.append(g_aux[accept])
+		g_all.append(g[accept])
 		cnt += accept.sum()
 		if cnt >= total:
 			break
 		kws['seed'] += 1
 
-	g_all, g_aux_all = cat_map([g_all, g_aux_all], axis=-1)
+	alpha_dot = np.transpose(alpha_dot, (0, -1, 1, 2))
+	g_all, g_aux_all = cat_map([g_all, g_aux_all], axis=0)
 	g_all, g_aux_all = g_all[:, :total], g_aux_all[:, :total]
 
 	attrs = {
+		'f': f,
+		'f_aux': f_aux,
 		'category': of.category,
 		'n_obj': of.n_obj,
 		'dim': of.dim,
@@ -58,28 +61,33 @@ def generate_simulation(
 		'residual': of.residual,
 		'seeds': range(kws['seed'] + 1),
 	}
-	return alpha_dot, f, g_all, f_aux, g_aux_all, attrs
+	return alpha_dot, g_all, g_aux_all, attrs
 
 
 def save_simulation(
 		save_dir: str,
 		x: np.ndarray,
-		f: List[str],
 		g: np.ndarray,
-		f_aux: List[str],
 		g_aux: np.ndarray,
 		attrs: dict,
 		split: dict = None, ):
 	n = len(x)
-	fname = '_'.join([
+	name = '_'.join([
 		f"{attrs['category']}{attrs['n_obj']}",
 		f"dim-{attrs['dim']}",
-		f"n-{n:1.2g}.h5",
+		f"n-{n//1000}k",
 	])
-	ff = pjoin(save_dir, fname)
-	ff = h5py.File(ff, 'w')
-	ff.attrs.update(attrs)
-
+	path = pjoin(save_dir, name)
+	os.makedirs(path, exist_ok=True)
+	# save attrs
+	save_obj(
+		obj=attrs,
+		save_dir=path,
+		file_name='attrs',
+		verbose=False,
+		mode='npy',
+	)
+	# save data
 	split = split if split else {
 		'trn': int(0.8 * n),
 		'vld': int(0.1 * n),
@@ -94,17 +102,26 @@ def save_simulation(
 	for a, b in itertools.combinations(split_ids.values(), 2):
 		assert not set(a).intersection(b)
 
-	string_dt = h5py.string_dtype('utf-8')
-	for label, ids in split_ids.items():
-		grp = ff.create_group(label)
-		grp.create_dataset('f', data=f, dtype=string_dt)
-		grp.create_dataset('g', data=g[:, ids], dtype=float)
-		grp.create_dataset('f_aux', data=f_aux, dtype=string_dt)
-		grp.create_dataset('g_aux', data=g_aux[:, ids], dtype=float)
-		grp.create_dataset('x', data=x[ids], dtype=x.dtype)
-
-	print(f'{fname}\tsaved at\t{save_dir}')
-	ff.close()
+	for lbl, ids in split_ids.items():
+		_path = pjoin(path, lbl)
+		os.makedirs(_path, exist_ok=True)
+		kws = dict(
+			save_dir=_path,
+			verbose=False,
+			mode='npy',
+		)
+		# flow frames
+		kws['obj'] = x[ids]
+		kws['file_name'] = 'x'
+		save_obj(**kws)
+		# generative factors
+		kws['obj'] = g[ids]
+		kws['file_name'] = 'g'
+		save_obj(**kws)
+		# generative factors (auxiliary)
+		kws['obj'] = g_aux[ids]
+		kws['file_name'] = 'g_aux'
+		save_obj(**kws)
 	return
 
 
