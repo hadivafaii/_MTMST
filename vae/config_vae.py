@@ -7,7 +7,7 @@ class ConfigVAE(BaseConfig):
 			sim: str,
 			n_ch: int = 32,
 			ker_sz: int = 2,
-			input_sz: int = 65,
+			input_sz: int = 17,
 			n_enc_cells: int = 2,
 			n_enc_nodes: int = 2,
 			n_dec_cells: int = 2,
@@ -16,9 +16,9 @@ class ConfigVAE(BaseConfig):
 			n_pre_blocks: int = 1,
 			n_post_cells: int = 3,
 			n_post_blocks: int = 1,
-			n_latent_scales: int = 2,
+			n_latent_scales: int = 3,
 			n_latent_per_group: int = 7,
-			n_groups_per_scale: int = 20,
+			n_groups_per_scale: int = 16,
 			activation_fn: str = 'swish',
 			balanced_recon: bool = True,
 			residual_kl: bool = True,
@@ -57,7 +57,7 @@ class ConfigVAE(BaseConfig):
 			is_adaptive=ada_groups,
 		)
 		super(ConfigVAE, self).__init__(
-			sim_path=f"{sim}_dim-65_n-750k",
+			sim_path=f"{sim}_dim-{input_sz}_n-750k",
 			name=self.name(),
 			full=full,
 			**kwargs,
@@ -130,17 +130,18 @@ class ConfigTrainVAE(BaseConfigTrain):
 			lr=0.003,
 			epochs=2000,
 			batch_size=500,
+			warm_restart=0,
 			warmup_portion=0.025,
 			optimizer='adamax_fast',
 			optimizer_kws=None,
 			scheduler_type='cosine',
 			scheduler_kws=None,
 			ema_rate=0.999,
-			grad_clip=1000,
+			grad_clip=11000,
 			use_amp=False,
-			chkpt_freq=50,
-			eval_freq=10,
-			log_freq=20,
+			chkpt_freq=20,
+			eval_freq=5,
+			log_freq=10,
 		)
 		kwargs = setup_kwargs(defaults, kwargs)
 		super(ConfigTrainVAE, self).__init__(**kwargs)
@@ -178,7 +179,7 @@ def _groups_per_scale(
 		n_scales: int,
 		n_groups_per_scale: int,
 		is_adaptive: bool = True,
-		min_groups: int = 1,
+		min_groups: int = 2,
 		divider: int = 2, ):
 	assert n_groups_per_scale >= 1
 	n = n_groups_per_scale

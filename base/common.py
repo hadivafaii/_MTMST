@@ -251,7 +251,7 @@ class Conv1D(nn.Conv1d):
 		assert init_scale > 0
 		self.apply_norm = apply_norm
 		self.dims, self.shape = _dims(normalize_dim, 3)
-		init = torch.ones(self.out_channels) * init_scale
+		init = torch.ones(self.out_channels).mul(init_scale)
 		self.lognorm = nn.Parameter(
 			data=torch.log(init),
 			requires_grad=True,
@@ -300,7 +300,7 @@ class Conv2D(nn.Conv2d):
 		assert init_scale > 0
 		self.apply_norm = apply_norm
 		self.dims, self.shape = _dims(normalize_dim, 4)
-		init = torch.ones(self.out_channels) * init_scale
+		init = torch.ones(self.out_channels).mul(init_scale)
 		self.lognorm = nn.Parameter(
 			data=torch.log(init),
 			requires_grad=True,
@@ -349,7 +349,7 @@ class DeConv2D(nn.ConvTranspose2d):
 		assert init_scale > 0
 		self.apply_norm = apply_norm
 		self.dims, self.shape = _dims(normalize_dim, 4)
-		init = torch.ones(self.out_channels) * init_scale
+		init = torch.ones(self.out_channels).mul(init_scale)
 		self.lognorm = nn.Parameter(
 			data=torch.log(init),
 			requires_grad=True,
@@ -396,7 +396,7 @@ class Linear(nn.Linear):
 		assert init_scale > 0
 		self.apply_norm = apply_norm
 		self.dims, self.shape = _dims(normalize_dim, 2)
-		init = torch.ones(self.out_features) * init_scale
+		init = torch.ones(self.out_features).mul(init_scale)
 		self.lognorm = nn.Parameter(
 			data=torch.log(init),
 			requires_grad=True,

@@ -11,7 +11,7 @@ class BaseConfig(object):
 			seed: int = 0,
 			full: bool = False,
 			save: bool = False,
-			h_file: str = 'MTLFP_tres25',
+			h_file: str = 'ALL_tres25',
 			sim_path: str = 'fixate1_dim-65_n-750k',
 			base_dir: str = 'Documents/MTMST',
 	):
@@ -48,8 +48,16 @@ class BaseConfig(object):
 			os.makedirs(_dir, exist_ok=True)
 
 	def _load_cellinfo(self):
-		self.useful_cells = load_cellinfo(
+		useful = load_cellinfo(
 			pjoin(self.base_dir, 'extra_info'))
+		with h5py.File(self.h_file) as file:
+			for expt in file['YUWEI']:
+				if expt in useful:
+					continue
+				useful[expt] = [0]
+		useful = dict(sorted(useful.items()))
+		self.useful_cells = useful
+		return
 
 	def set_seed(self):
 		torch.manual_seed(self.seed)
@@ -67,6 +75,7 @@ class BaseConfigTrain(object):
 			lr: float,
 			epochs: int,
 			batch_size: int,
+			warm_restart: int,
 			warmup_portion: float,
 			optimizer: str,
 			optimizer_kws: dict,
@@ -83,6 +92,7 @@ class BaseConfigTrain(object):
 		self.lr = lr
 		self.epochs = epochs
 		self.batch_size = batch_size
+		self.warm_restart = warm_restart
 		self.warmup_portion = warmup_portion
 		assert optimizer in _OPTIM_CHOICES,\
 			f"allowed optimizers:\n{_OPTIM_CHOICES}"
@@ -117,10 +127,8 @@ class BaseConfigTrain(object):
 
 	def _set_scheduler_kws(self, kws):
 		lr_min = 1e-5
-		period = np.round(
-			self.epochs *
-			(1 - self.warmup_portion)
-		) - 1
+		period = self.epochs * (1 - self.warmup_portion)
+		period /= (2 * self.warm_restart + 1)
 		if self.scheduler_type == 'cosine':
 			defaults = {
 				'T_max': period,

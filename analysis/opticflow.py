@@ -811,7 +811,7 @@ class HyperFlow(Obj):
 			self,
 			params: np.ndarray,
 			center: np.ndarray,
-			size: Tuple[int, int],
+			dim: Tuple[int, int],
 			radius: float,
 			sres: float = 1,
 			tres: int = 25,
@@ -823,10 +823,10 @@ class HyperFlow(Obj):
 		assert center.shape[1] == 2
 		self.params = params
 		self.center = center
-		if not isinstance(size, Iterable):
-			size = (size, size)
-		assert len(size) == 2
-		self.size = size
+		if not isinstance(dim, Iterable):
+			dim = (dim, dim)
+		assert len(dim) == 2
+		self.dim = dim
 		self.radius = radius
 		self.sres = sres
 		self.tres = tres
@@ -837,7 +837,7 @@ class HyperFlow(Obj):
 			transpose: bool = True, ):
 		dim = tuple(
 			e // self.sres for
-			e in self.size
+			e in self.dim
 		)
 		shape = (-1, ) + dim + (2, )
 		stim = self._hf().reshape(shape)
@@ -901,7 +901,7 @@ class HyperFlow(Obj):
 		return f, px
 
 	def _hf(self):
-		xl, yl = self.size
+		xl, yl = self.dim
 		xl = int(np.round(xl / self.sres))
 		yl = int(np.round(yl / self.sres))
 

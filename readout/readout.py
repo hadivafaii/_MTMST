@@ -211,6 +211,6 @@ def process_ftrs(
 		raise NotImplementedError
 	if pool is not None:
 		for s, x in ftr.items():
-			if s > scale:
+			if s != scale:
 				ftr[s] = pool(x)
 	return ftr

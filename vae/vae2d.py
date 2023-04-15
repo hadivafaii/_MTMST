@@ -225,7 +225,6 @@ class VAE(Module):
 		for cell in self.post_process:
 			s = cell(s)
 		ftr = {
-			'enc0': ftr_enc0,
 			'enc': {k: torch.cat(v, dim=1) for k, v in ftr_enc.items()},
 			'dec': {k: torch.cat(v, dim=1) for k, v in ftr_dec.items()},
 		}
@@ -260,8 +259,8 @@ class VAE(Module):
 
 		# multiply with num channels per scale
 		for i, s in enumerate(self.scales, start=1):
-			n_ftrs_enc[s] *= self.cfg.n_ch * i * MULT
-			n_ftrs_dec[s] *= self.cfg.n_ch * i * MULT
+			n_ftrs_enc[s] *= self.cfg.n_ch * MULT ** i
+			n_ftrs_dec[s] *= self.cfg.n_ch * MULT ** i
 
 		return dict(n_ftrs_enc), dict(n_ftrs_dec)
 
@@ -687,6 +686,7 @@ class Sampler(nn.Module):
 			compress: bool = True,
 			separable: bool = False,
 			init_scale: float = 1.0,
+			reduction: int = 4,
 			bias: bool = True,
 	):
 		super(Sampler, self).__init__()
@@ -710,7 +710,7 @@ class Sampler(nn.Module):
 				in_channels=in_channels,
 				out_channels=in_channels,
 				kernel_size=spatial_dim,
-				groups=in_channels,
+				groups=in_channels // reduction,
 				apply_norm=True,
 				init_scale=1.0,
 				bias=bias,

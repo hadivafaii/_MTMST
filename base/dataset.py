@@ -5,8 +5,12 @@ from torch.utils.data.dataset import Dataset
 
 # noinspection PyUnresolvedReferences
 class ROFL(Dataset):
-	def __init__(self, path: str, mode: str):
-
+	def __init__(
+			self,
+			path: str,
+			mode: str,
+			device: torch.device = None,
+	):
 		# attributes
 		self.attrs = np.load(
 			pjoin(path, 'attrs.npy'),
@@ -14,27 +18,26 @@ class ROFL(Dataset):
 		).item()
 		self.f = self.attrs.pop('f')
 		self.f_aux = self.attrs.pop('f_aux')
-
 		# mode = trn/vld/tst
 		path = pjoin(path, mode)
-
+		kws = dict(mmap_mode='r')
 		# generative factors
-		self.g = np.load(
-			pjoin(path, 'g.npy'),
-			mmap_mode='r',
-		).astype(float)
-		self.g_aux = np.load(
-			pjoin(path, 'g_aux.npy'),
-			mmap_mode='r',
-		).astype(float)
-
-		# data
-		self.x = np.load(
-			pjoin(path, 'x.npy'),
-			mmap_mode='r',
-		).astype('float32')
-		self.norm = sp_lin.norm(
-			self.x, axis=1).sum(-1).sum(-1)
+		self.g = np.load(pjoin(path, 'g.npy'), **kws)
+		self.g_aux = np.load(pjoin(path, 'g_aux.npy'), **kws)
+		# data & norm
+		self.x = np.load(pjoin(path, 'x.npy'), **kws)
+		self.norm = np.load(pjoin(path, 'norm.npy'), **kws)
+		if device is not None:
+			self.x = torch.tensor(
+				data=self.x,
+				device=device,
+				dtype=torch.float,
+			)
+			self.norm = torch.tensor(
+				data=self.norm,
+				device=device,
+				dtype=torch.float,
+			)
 
 	def __len__(self):
 		return len(self.x)
@@ -45,16 +48,14 @@ class ROFL(Dataset):
 
 def setup_repeat_data(
 		group: h5py.Group,
-		kws_hf: dict = None,
-		use_hf: bool = True, ):
-	if 'repeats' not in group:
+		kws_hf: dict = None, ):
+	if not group.attrs.get('has_repeats'):
 		return None, None, None
 	kws_hf = kws_hf if kws_hf else {
-		'size': 32,
+		'dim': 32,
 		'sres': 1,
 		'radius': 8,
 	}
-	group = group['repeats']
 	psth = np.array(group['psth_raw_all'], dtype=float)
 	badspks = np.array(group['fix_lost_all'], dtype=bool)
 	tstart = np.array(group['tind_start_all'], dtype=int)
@@ -65,15 +66,12 @@ def setup_repeat_data(
 	intvl = np.array(intvl)
 
 	# stim
-	if use_hf:
-		hf = HyperFlow(
-			params=np.array(group['hyperflowR'])[:, 2:],
-			center=np.array(group['hyperflowR'])[:, :2],
-			**kws_hf,
-		)
-		stim = hf.compute_hyperflow()
-	else:
-		stim = np.array(group['stimR'], dtype=float)
+	hf = HyperFlow(
+		params=np.array(group['hf_paramsR']),
+		center=np.array(group['hf_centerR']),
+		**kws_hf,
+	)
+	stim = hf.compute_hyperflow()
 	stim = stim[range(max(intvl))]
 
 	# spks
@@ -113,6 +111,14 @@ def time_embed(x, lags, idxs=None):
 	return np.concatenate(x_emb)
 
 
+def simulation_combos():
+	combos = [('fixate', i) for i in [0, 1, 2, 4, 8]]
+	combos += [('terrain', i) for i in [4, 8, 16]]
+	combos += [('transl', i) for i in [0, 2, 4]]
+	combos += [('obj', i) for i in [1, 2, 4, 8]]
+	return combos
+
+
 def _setup_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser()
 
@@ -125,19 +131,19 @@ def _setup_args() -> argparse.Namespace:
 		"--n_batch",
 		help='# frames per batch',
 		type=int,
-		default=int(1e4),
+		default=int(5e4),
 	)
 	parser.add_argument(
 		"--dim",
 		help='dimensionality',
 		type=int,
-		default=65,
+		default=17,
 	)
 	parser.add_argument(
 		"--min_obj_size",
 		help='minimum acceptable object size',
-		type=int,
-		default=6,
+		type=float,
+		default=3.5,
 	)
 	parser.add_argument(
 		"--dtype",
@@ -156,11 +162,11 @@ def _main():
 		n=args.n_batch,
 		dim=args.dim,
 		fov=45.0,
-		obj_r=0.2,
+		obj_r=0.25,
 		obj_bound=0.97,
 		obj_zlim=(0.5, 1.0),
-		vlim_obj=(0.01, 5.0),
-		vlim_slf=(0.01, 5.0),
+		vlim_obj=(0.01, 1.0),
+		vlim_slf=(0.01, 1.0),
 		residual=False,
 		z_bg=1.0,
 		seed=0,
@@ -168,19 +174,14 @@ def _main():
 	accept_n = {
 		0: None,
 		1: None,
-		2: None,
+		2: 1,
 		4: 3,
-		8: 7,
-		16: 14,
+		8: 5,
+		16: 10,
 	}
-	combos = [('fixate', i) for i in [0, 1, 2, 4, 8]]
-	combos += [('terrain', i) for i in [4, 8, 16]]
-	combos += [('transl', i) for i in [0, 2, 4]]
-	combos += [('obj', i) for i in [1, 2, 4, 8]]
-
 	from utils.process import generate_simulation, save_simulation
 	save_dir = '/home/hadi/Documents/MTMST/data'
-	pbar = tqdm(combos)
+	pbar = tqdm(simulation_combos())
 	for category, n_obj in pbar:
 		pbar.set_description(f"creating {category}{n_obj}")
 		alpha_dot, g, g_aux, attrs = generate_simulation(
@@ -199,7 +200,7 @@ def _main():
 			g_aux=g_aux,
 			attrs=attrs,
 		)
-	print(f"\n[PROGRESS] saving datasets done {now(True)}.\n")
+	print(f"\n[PROGRESS] saving datasets done ({now(True)}).\n")
 	return
 
 

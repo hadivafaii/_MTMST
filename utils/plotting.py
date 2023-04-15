@@ -8,6 +8,28 @@ from matplotlib.backends.backend_pdf import FigureCanvasPdf, PdfPages
 from matplotlib.colors import to_rgb, rgb2hex, Colormap, LinearSegmentedColormap
 
 
+def barplot_add_vals(axes, fontsize: float = 10):
+	ymax = axes.get_ybound()[1]
+
+	def _single(_ax):
+		for p in _ax.patches:
+			h = p.get_height()
+			w = p.get_width()
+			_ax.text(
+				x=p.get_x() + 0.5 * w,
+				y=p.get_y() + h - 0.035 * ymax,
+				s=f'{h:.2f}',
+				fontsize=fontsize,
+				ha="center",
+			)
+	if isinstance(axes, np.ndarray):
+		for idx, ax in np.ndenumerate(axes):
+			_single(ax)
+	else:
+		_single(axes)
+	return
+
+
 # noinspection PyUnresolvedReferences
 def show_hsv(figsize=(3, 3), num=2048):
 	fig = plt.figure(figsize=figsize)

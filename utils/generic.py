@@ -226,9 +226,10 @@ def save_obj(
 		if mode == 'npy':
 			np.save(f.name, obj)
 		elif mode == 'df':
-			pd.to_pickle(obj, f)
+			pd.to_pickle(obj, f.name)
 		elif mode == 'pkl':
-			pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
+			# noinspection PyTypeChecker
+			pickle.dump(obj, f)
 		elif mode == 'joblib':
 			joblib.dump(obj, f)
 		elif mode == 'html':

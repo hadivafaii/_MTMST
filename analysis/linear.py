@@ -144,11 +144,11 @@ class LinearModel(Obj):
 			msg += f"default params:\n{self.defaults}"
 			print(msg)
 
-	def fit(self, fit_df: bool = True, **kwargs):
+	def fit_linear(self, fit_df: bool = True, **kwargs):
 		kwargs = setup_kwargs(self.defaults, kwargs)
 		for a in self.alphas:
 			kwargs['alpha'] = a
-			model = self.fn(**kwargs)
+			model = self.fn(**filter_kwargs(self.fn, kwargs))
 			model.fit(flatten_stim(self.x), self.y)
 			kernel = model.coef_.reshape(self.x.shape[1:])
 			try:
@@ -162,43 +162,42 @@ class LinearModel(Obj):
 				self.r2_tst[a] = sk_metric.r2_score(self.y_tst, pred) * 100
 				self.preds[a] = pred
 		if self.df is None and fit_df:
-			self._fit_df(**kwargs)
+			self.fit_df(**kwargs)
 		return self
 
-	def _fit_df(self, **kwargs):
+	def fit_df(self, **kwargs):
 		df = []
 		for a in self.alphas:
 			kwargs['alpha'] = a
 			nnll, r2, r = self._fit_folds(**kwargs)
 			df.append({
-				'alpha': [a] * self.kf.n_splits,
-				'fold': range(self.kf.n_splits),
-				'nnll': nnll,
-				'r2': r2,
-				'r': r,
+				'alpha': [a] * len(r),
+				'fold': r.keys(),
+				'r': r.values(),
+				'r2': r2.values(),
+				'nnll': nnll.values(),
 			})
 		df = pd.DataFrame(merge_dicts(df))
 		df = df.groupby(['alpha']).mean()
 		df = df.drop(columns=['fold'])
 		self.df = df
-		return
+		return self
 
-	def _fit_folds(self, **kwargs):
-		nnll, r, r2 = [], [], []
-		for trn, vld in self.kf.split(self.x):
-			model = self.fn(**kwargs)
-			model.fit(
-				X=flatten_stim(self.x[trn]),
-				y=self.y[trn],
-			)
+	def _fit_folds(self, full: bool = True, **kwargs):
+		nnll, r, r2 = {}, {}, {}
+		for fold, (trn, vld) in enumerate(self.kf.split(self.x)):
+			if not full and fold > 0:
+				continue
+			model = self.fn(**filter_kwargs(self.fn, kwargs))
+			model.fit(flatten_stim(self.x[trn]), self.y[trn])
 			pred = model.predict(flatten_stim(self.x[vld]))
-			nnll.append(null_adj_ll(self.y[vld], np.maximum(0, pred)))
-			r.append(sp_stats.pearsonr(self.y[vld], pred)[0])
+			nnll[fold] = null_adj_ll(self.y[vld], np.maximum(0, pred))
+			r[fold] = sp_stats.pearsonr(self.y[vld], pred)[0]
 			if self.x_tst is not None:
 				pred = model.predict(flatten_stim(self.x_tst))
-				r2.append(sk_metric.r2_score(self.y_tst, pred) * 100)
+				r2[fold] = sk_metric.r2_score(self.y_tst, pred) * 100
 			else:
-				r2.append(None)
+				r2[fold] = None
 		return nnll, r2, r
 
 	def show_pred(self, figsize=(7, 3.5)):
@@ -208,7 +207,7 @@ class LinearModel(Obj):
 		ax.plot(self.y_tst, lw=1.8, color='k', label='true')
 		for i, (a, r2) in enumerate(self.r2_tst.items()):
 			lbl = r"$R^2 = $" + f"{r2:0.1f}%  ("
-			lbl += r"$\alpha = $" + f"{a:0.3g})"
+			lbl += r"$\alpha = $" + f"{a:0.2g})"
 			ax.plot(self.preds[a], color=f'C{i}', label=lbl)
 		ax.legend(fontsize=9)
 		leg = ax.get_legend()
@@ -219,35 +218,62 @@ class LinearModel(Obj):
 		return fig, ax
 
 
-def compute_sta(
-		lags: int,
+def compute_sta_remove(
+		n_lags: int,
 		good: np.ndarray,
 		stim: np.ndarray,
 		spks: np.ndarray,
 		zscore: bool = True,
 		verbose: bool = False, ):
-	assert lags >= 0
+	assert n_lags >= 0
+	nc = spks.shape[-1]
+	shape = stim.shape[1:]
+	stim = flatten_stim(stim)
+	if zscore:
+		stim = sp_stats.zscore(stim)
+	stim = np.expand_dims(stim, 0)
+	inds = good.copy()
+	inds = inds[inds > n_lags]
+	# compute sta
+	sta = np.zeros((nc, n_lags + 1, np.prod(shape)))
+	for t in tqdm(inds, disable=not verbose):
+		# zero n_lags allowed:
+		x = stim[:, t - n_lags: t + 1]
+		y = spks[t].reshape((-1, 1, 1))
+		sta += x * y
+	# divide by # spks
+	n = spks[inds].sum(0)
+	n = n.reshape((-1, 1, 1))
+	sta /= n
+	# reshape back to original
+	shape = (nc, n_lags + 1, *shape)
+	sta = sta.reshape(shape)
+	return sta
+
+
+def compute_sta(
+		n_lags: int,
+		good: np.ndarray,
+		stim: np.ndarray,
+		spks: np.ndarray,
+		zscore: bool = True,
+		verbose: bool = False, ):
+	assert n_lags >= 0
 	shape = stim.shape
 	nc = spks.shape[-1]
-	sta = np.zeros((nc, lags+1) + shape[1:])
+	sta = np.zeros((nc, n_lags+1, *shape[1:]))
 	shape = (nc,) + (1,) * len(shape)
 	if zscore:
-		mu = stim.mean(0, keepdims=True)
-		sd = stim.std(0, keepdims=True)
-	else:
-		mu, sd = None, None
-	idxs = good.copy()
-	idxs = idxs[idxs > lags]
-	for t in tqdm(idxs, disable=not verbose):
-		# zero lags allowed:
-		x = stim[t - lags: t + 1]
-		if zscore:
-			x = (x - mu) / sd
+		stim = sp_stats.zscore(stim)
+	inds = good.copy()
+	inds = inds[inds > n_lags]
+	for t in tqdm(inds, disable=not verbose):
+		# zero n_lags allowed:
+		x = stim[t - n_lags: t + 1]
 		x = np.expand_dims(x, 0)
-		x = np.repeat(x, nc, axis=0)
 		y = spks[t].reshape(shape)
 		sta += x * y
-	n = spks[idxs].sum(0)
+	n = spks[inds].sum(0)
 	n = n.reshape(shape)
 	sta /= n
 	return sta

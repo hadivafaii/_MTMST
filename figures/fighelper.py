@@ -3,7 +3,42 @@ from analysis.helper import vel2polar
 from matplotlib.gridspec import GridSpec
 
 
-def show_heatmap(
+def plot_bar(df: pd.DataFrame, display: bool = True, **kwargs):
+	defaults = dict(
+		x='x',
+		y='y',
+		figsize_y=7,
+		figsize_x=0.7,
+		tick_labelsize_x=15,
+		tick_labelsize_y=15,
+		ylabel_fontsize=20,
+		title_fontsize=18,
+		vals_fontsize=13,
+		title_y=1,
+	)
+	kwargs = setup_kwargs(defaults, kwargs)
+	figsize = (
+		kwargs['figsize_x'] * len(df),
+		kwargs['figsize_y'],
+	)
+	fig, ax = create_figure(1, 1, figsize)
+	bp = sns.barplot(data=df, x=kwargs['x'], y=kwargs['y'], ax=ax)
+	barplot_add_vals(bp, fontsize=kwargs['vals_fontsize'])
+	ax.tick_params(axis='x', rotation=-90, labelsize=kwargs['tick_labelsize_x'])
+	ax.tick_params(axis='y', labelsize=kwargs['tick_labelsize_y'])
+	title = r'avg $R^2 = $' + f"{df[kwargs['y']].mean() * 100:0.1f} %"
+	ax.set_title(title, fontsize=kwargs['title_fontsize'], y=kwargs['title_y'])
+	ax.set_ylabel(r'$R^2$', fontsize=kwargs['ylabel_fontsize'])
+	ax.set_xlabel('')
+	ax.grid()
+	if display:
+		plt.show()
+	else:
+		plt.close()
+	return fig, ax
+
+
+def plot_heatmap(
 		r: np.ndarray,
 		title: str = None,
 		xticklabels: List[str] = None,
@@ -173,7 +208,7 @@ def plot_latents_hist(
 
 def plot_opticflow_hist(
 		x: np.ndarray,
-		val: float = 5.0,
+		val: float = 1.0,
 		display: bool = True, ):
 	rho, theta = vel2polar(x)
 	fig, axes = create_figure(
@@ -245,7 +280,7 @@ def show_opticflow(
 		**kwargs, ):
 	defaults = {
 		'figsize': (9, 9),
-		'tick_spacing': 3,
+		'tick_spacing': 4,
 		'title_fontsize': 15,
 		'scale': None,
 	}
@@ -304,7 +339,7 @@ def show_opticflow_full(v: np.ndarray, **kwargs):
 		'cmap_v': 'bwr',
 		'cmap_rho': 'Spectral_r',
 		'figsize': (10, 9),
-		'tick_spacing': 3,
+		'tick_spacing': 4,
 		'scale': None,
 	}
 	kwargs = setup_kwargs(defaults, kwargs)

@@ -1,8 +1,8 @@
 from .vae2d import VAE
 from base.dataset import ROFL
 from base.train_base import *
-from analysis.linear import regress
-from figures.fighelper import show_heatmap, show_opticflow
+from analysis.linear import regress, mi_analysis
+from figures.fighelper import plot_heatmap, show_opticflow, plot_bar
 
 
 class TrainerVAE(BaseTrainer):
@@ -118,10 +118,9 @@ class TrainerVAE(BaseTrainer):
 					self.stats['grad'][gstep] = grad_norm
 					self.stats['loss'][gstep] = loss.item()
 			# update average meters & stats
-			nelbo.update(loss)
-			perdim_kl.update(torch.stack(kl_diag).mean())
-			perdim_epe.update(
-				epe.mean() / self.model.cfg.input_sz**2)
+			nelbo.update(loss.item())
+			perdim_kl.update(torch.stack(kl_diag).mean().item())
+			perdim_epe.update(epe.mean().item() / self.model.cfg.input_sz ** 2)
 			msg = [
 				f"gstep # {gstep:.3g}",
 				f"nelbo: {nelbo.avg:0.3f}",
@@ -154,9 +153,9 @@ class TrainerVAE(BaseTrainer):
 				'train/lr': self.optim.param_groups[0]['lr'],
 				'train/loss_kl': torch.mean(sum(kl_all)).item(),
 				'train/loss_epe': torch.mean(epe).item(),
-				'train/nelbo_avg': nelbo.avg.item(),
-				'train/perdim_kl': perdim_kl.avg.item(),
-				'train/perdim_epe': perdim_epe.avg.item(),
+				'train/nelbo_avg': nelbo.avg,
+				'train/perdim_kl': perdim_kl.avg,
+				'train/perdim_epe': perdim_epe.avg,
 				'train/reg_weight': loss_w.item(),
 			}
 			if self.cfg.grad_clip is not None:
@@ -175,6 +174,10 @@ class TrainerVAE(BaseTrainer):
 			to_write['train/total_active_ratio'] = ratio
 			for k, v in to_write.items():
 				self.writer.add_scalar(k, v, gstep)
+			# reset average meters
+			if gstep % (self.cfg.log_freq * 10) == 0:
+				for m in [grads, nelbo]:
+					m.reset()
 
 		return nelbo.avg
 
@@ -184,37 +187,51 @@ class TrainerVAE(BaseTrainer):
 			n_samples: int = 4096,
 			use_ema: bool = False, ):
 		data, loss = self.forward('vld', use_ema=use_ema)
+		regr = self.regress(use_ema=use_ema)
+
 		# sample? plot?
 		if gstep is not None:
 			i = int(gstep / len(self.dl_trn))
-			cond = i % (self.cfg.eval_freq * 2) == 0
+			cond = i % (self.cfg.eval_freq * 5) == 0
 		else:
 			cond = True
 		cond = cond and n_samples is not None
 		if cond:
-			x_sample, z_sample, regr, figs = self.plot(
-				n_samples=n_samples, use_ema=use_ema)
+			x_sample, z_sample, mi, figs = self.plot(
+				regr=regr,
+				use_ema=use_ema,
+				n_samples=n_samples,
+			)
 			data = {
 				'x_sample': x_sample,
 				'z_sample': z_sample,
-				**regr,
-				**figs,
+				**mi, **figs,
 			}
 		else:
-			regr, figs = None, None
+			mi, figs = None, None
 		# write
 		if gstep is not None:
-			for k, v in loss.items():
-				self.writer.add_scalar(f"eval/{k}", v.mean(), gstep)
+			to_write = {
+				f"eval/{k}": v.mean()
+				for k, v in loss.items()
+			}
+			to_write = {
+				**to_write,
+				'eval/r2': regr['regr/r2'].mean() * 100,
+				'eval/r': np.diag(regr['regr/r']).mean(),
+				'eval/r2_aux': regr['regr/aux/r2'].mean() * 100,
+				'eval/r_aux': np.diag(regr['regr/aux/r']).mean(),
+				'eval/disentang': regr['regr/d'],
+				'eval/complete': regr['regr/c'],
+			}
+			for k, v in to_write.items():
+				self.writer.add_scalar(k, v, gstep)
+				self.stats[k][gstep] = v
 			if cond:
 				to_write = {
-					'eval/r2': regr['regr/r2'].mean() * 100,
-					'eval/r': np.diag(regr['regr/r']).mean(),
-					'eval/mi': np.max(regr['regr/mi'], 1).mean(),
-					'eval/mi_norm': np.max(regr['regr/mi_norm'], 1).mean(),
-					'eval/mig': regr['regr/mig'].mean(),
-					'eval/disentang': regr['regr/d'],
-					'eval/complete': regr['regr/c'],
+					'eval/mi': np.max(mi['regr/mi'], 1).mean(),
+					'eval/mi_norm': np.max(mi['regr/mi_norm'], 1).mean(),
+					'eval/mig': mi['regr/mig'].mean(),
 				}
 				for k, v in to_write.items():
 					self.writer.add_scalar(k, v, gstep)
@@ -299,19 +316,30 @@ class TrainerVAE(BaseTrainer):
 			z_vld, z_tst = cat_map([z_vld, z_tst])
 			z_vld = z_vld.mean(0)
 			z_tst = z_tst.mean(0)
-		g_vld = self.dl_vld.dataset.factors
-		g_tst = self.dl_tst.dataset.factors
-		output = regress(z_vld, g_vld, z_tst, g_tst)
-		output = {
+		regr = regress(
+			z=z_vld,
+			z_tst=z_tst,
+			g=self.dl_vld.dataset.g,
+			g_tst=self.dl_tst.dataset.g,
+		)
+		regr_aux = regress(
+			z=z_vld,
+			z_tst=z_tst,
+			g=self.dl_vld.dataset.g_aux,
+			g_tst=self.dl_tst.dataset.g_aux,
+		)
+		regr = {
 			f"regr/{k}": v for
-			k, v in output.items()
+			k, v in regr.items()
 		}
+		regr_aux.update({
+			f"regr/aux/{k}": v for
+			k, v in regr_aux.items()
+		})
 		output = {
 			'z_vld': z_vld,
 			'z_tst': z_tst,
-			'g_vld': g_vld,
-			'g_tst': g_tst,
-			**output,
+			**regr, **regr_aux,
 		}
 		return output
 
@@ -331,20 +359,20 @@ class TrainerVAE(BaseTrainer):
 		figs['fig/sample'] = fig
 
 		# corr (regression)
-		names = self.dl_tst.dataset.factor_names
-		_tx = [f"({i:02d})" for i in range(len(names))]
-		_ty = [f"{e} ({i:02d})" for i, e in names.items()]
+		f = self.dl_tst.dataset.f
+		_tx = [f"({i:02d})" for i in range(len(f))]
+		_ty = [f"{e} ({i:02d})" for i, e in enumerate(f)]
 		rd = np.diag(regr['regr/r'])
 		title = f"all  =  {rd.mean():0.3f} ± {rd.std():0.3f}  "
 		title += r'$(\mu \pm \sigma)$' + '\n'
 		name_groups = collections.defaultdict(list)
-		for i, lbl in names.items():
+		for i, lbl in enumerate(f):
 			k = '_'.join(lbl.split('_')[:-1])
 			name_groups[k].append(i)
 		for k, ids in name_groups.items():
 			title += f"{k} :  {rd[ids].mean():0.2f},"
 			title += ' ' * 5
-		fig, _ = show_heatmap(
+		fig, _ = plot_heatmap(
 			r=regr['regr/r'],
 			title=title,
 			cmap='PiYG',
@@ -356,12 +384,32 @@ class TrainerVAE(BaseTrainer):
 		)
 		figs['fig/regression'] = fig
 
+		# barplots
+		df = pd.DataFrame({
+			'x': self.dl_vld.dataset.f,
+			'y': regr['regr/r2'],
+		})
+		fig, _ = plot_bar(df, display=False)
+		figs['fig/bar'] = fig
+		# aux
+		df = pd.DataFrame({
+			'x': self.dl_vld.dataset.f_aux,
+			'y': regr['regr/aux/r2'],
+		})
+		fig, _ = plot_bar(df, display=False)
+		figs['fig/bar_aux'] = fig
+
 		# mutual info
-		title = '_'.join(self.model.cfg.name().split('_')[:2])
+		regr = {
+			**regr,
+			**{f"regr/{k}": v for k, v in mi_analysis(
+				regr['z_vld'], self.dl_vld.dataset.g).items()},
+		}
+		title = '_'.join(self.model.cfg.name().split('_')[:3])
 		mi_max = np.round(np.max(regr['regr/mi'], axis=1), 2)
 		mi_max = ', '.join([str(e) for e in mi_max])
 		title = f"model = {title};    max MI (row) = {mi_max}"
-		fig, _ = show_heatmap(
+		fig, _ = plot_heatmap(
 			r=regr['regr/mi'],
 			yticklabels=_ty,
 			title=title,
@@ -373,47 +421,23 @@ class TrainerVAE(BaseTrainer):
 			vmax=0.65,
 			cmap='rocket',
 			linecolor='dimgrey',
+			figsize=(22, 6),
 			cbar=False,
-			# cbar_kws={'pad': 0.002, 'shrink': 0.5},
-			figsize=(20, 5),
 			annot=False,
 			display=False,
 		)
 		figs['fig/mutual_info'] = fig
-
-		# TODO: better mutual info plots
-		# scales, level_ids = self.model.latent_scales()
-
-		# corr (latents)
-		# r = 1 - sp_dist.pdist(
-		# 	regr['z_vld'].T, 'correlation')
-		# r = sp_dist.squareform(r)
-		# fig, _ = show_heatmap(r, annot=False, display=False)
-		# figs['fig/corr_z'] = fig
-
-		# hist (latents)
-		# fig, _ = plot_latents_hist(
-		# 	z=z_sample,
-		# 	scales=scales,
-		# 	display=False,
-		# )
-		# figs['fig/hist_z'] = fig
-
-		# hist (samples)
-		# fig, _ = plot_opticflow_hist(
-		# 	x=x_sample, display=False)
-		# figs['fig/hist_x_sample'] = fig
 		return x_sample, z_sample, regr, figs
 
-	def setup_data(self):
+	def setup_data(self, gpu: bool = True):
 		# create datasets
-		ds_trn = ROFL(self.model.cfg.sim_path, 'trn')
-		ds_vld = ROFL(self.model.cfg.sim_path, 'vld')
-		ds_tst = ROFL(self.model.cfg.sim_path, 'tst')
+		device = self.device if gpu else None
+		ds_trn = ROFL(self.model.cfg.sim_path, 'trn', device)
+		ds_vld = ROFL(self.model.cfg.sim_path, 'vld', device)
+		ds_tst = ROFL(self.model.cfg.sim_path, 'tst', device)
 		# cleate dataloaders
 		kws = dict(
 			batch_size=self.cfg.batch_size,
-			pin_memory=True,
 			drop_last=True,
 			shuffle=True,
 		)
@@ -569,7 +593,13 @@ def _setup_args() -> argparse.Namespace:
 		default=500,
 	)
 	parser.add_argument(
-		"--warmup",
+		"--warm_restart",
+		help='# warm restarts',
+		type=int,
+		default=0,
+	)
+	parser.add_argument(
+		"--warmup_portion",
 		help='warmup portion',
 		type=float,
 		default=0.025,
@@ -633,7 +663,8 @@ def _main():
 			lr=args.lr,
 			epochs=args.epochs,
 			batch_size=args.batch_size,
-			warmup_portion=args.warmup,
+			warm_restart=args.warm_restart,
+			warmup_portion=args.warmup_portion,
 			optimizer=args.optimizer,
 			grad_clip=args.grad_clip,
 			scheduler_kws={
@@ -649,7 +680,7 @@ def _main():
 			lambda_anneal=True,
 			lambda_init=1e-7),
 	)
-	print(f"\n[PROGRESS] fitting VAE done {now(True)}.\n")
+	print(f"\n[PROGRESS] fitting VAE done ({now(True)}).\n")
 	return
 
 
