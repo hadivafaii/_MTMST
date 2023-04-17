@@ -137,7 +137,7 @@ class ConfigTrainVAE(BaseConfigTrain):
 			scheduler_type='cosine',
 			scheduler_kws=None,
 			ema_rate=0.999,
-			grad_clip=11000,
+			grad_clip=1000,
 			use_amp=False,
 			chkpt_freq=20,
 			eval_freq=5,

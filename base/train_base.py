@@ -125,13 +125,15 @@ class BaseTrainer(object):
 			p2.data.add_(p1.data.mul(1-self.ema_rate))
 		return
 
-	def save(self, checkpoint: int, path: str):
-		metadata = {
-			'checkpoint': checkpoint,
-			'global_step': checkpoint * len(self.dl_trn),
-		}
+	def save(self, path: str, checkpoint: int = None):
+		if checkpoint is not None:
+			global_step = checkpoint * len(self.dl_trn)
+		else:
+			global_step = None
 		state_dict = {
-			'metadata': metadata,
+			'metadata': {
+				'checkpoint': checkpoint,
+				'global_step': global_step},
 			'model': self.model.state_dict(),
 			'model_ema': self.model_ema.state_dict()
 			if self.model_ema is not None else None,
@@ -140,13 +142,16 @@ class BaseTrainer(object):
 			'scheduler': self.optim_schedule.state_dict()
 			if self.optim_schedule is not None else None,
 		}
-		fname = '-'.join([
-			'+'.join([
-				type(self.model).__name__,
-				type(self).__name__]),
-			f"{checkpoint:04d}",
-			f"({now(True)}).pt",
-		])
+		fname = '+'.join([
+			type(self.model).__name__,
+			type(self).__name__],
+		)
+		if checkpoint is not None:
+			fname = '-'.join([
+				fname,
+				f"{checkpoint:04d}"
+			])
+		fname = f"{fname}_({now(True)}).pt"
 		fname = pjoin(path, fname)
 		torch.save(state_dict, fname)
 		return

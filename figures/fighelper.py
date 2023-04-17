@@ -24,12 +24,27 @@ def plot_bar(df: pd.DataFrame, display: bool = True, **kwargs):
 	fig, ax = create_figure(1, 1, figsize)
 	bp = sns.barplot(data=df, x=kwargs['x'], y=kwargs['y'], ax=ax)
 	barplot_add_vals(bp, fontsize=kwargs['vals_fontsize'])
-	ax.tick_params(axis='x', rotation=-90, labelsize=kwargs['tick_labelsize_x'])
-	ax.tick_params(axis='y', labelsize=kwargs['tick_labelsize_y'])
-	title = r'avg $R^2 = $' + f"{df[kwargs['y']].mean() * 100:0.1f} %"
-	ax.set_title(title, fontsize=kwargs['title_fontsize'], y=kwargs['title_y'])
-	ax.set_ylabel(r'$R^2$', fontsize=kwargs['ylabel_fontsize'])
-	ax.set_xlabel('')
+	ax.tick_params(
+		axis='x',
+		rotation=-90,
+		labelsize=kwargs['tick_labelsize_x'],
+	)
+	ax.tick_params(
+		axis='y',
+		labelsize=kwargs['tick_labelsize_y'],
+	)
+	val = np.nanmean(df[kwargs['y']]) * 100
+	title = r'avg $R^2 = $' + f"{val:0.1f} %"
+	ax.set_title(
+		label=title,
+		y=kwargs['title_y'],
+		fontsize=kwargs['title_fontsize'],
+	)
+	ax.set_ylabel(
+		ylabel=r'$R^2$',
+		fontsize=kwargs['ylabel_fontsize'],
+	)
+	ax.set(xlabel='', ylim=(0, 1))
 	ax.grid()
 	if display:
 		plt.show()

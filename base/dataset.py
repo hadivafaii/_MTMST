@@ -63,7 +63,6 @@ def setup_repeat_data(
 	tstart = tstart[0]
 	nc, _, length = psth.shape
 	intvl = range(tstart[1], tstart[1] + length)
-	intvl = np.array(intvl)
 
 	# stim
 	hf = HyperFlow(
@@ -72,7 +71,8 @@ def setup_repeat_data(
 		**kws_hf,
 	)
 	stim = hf.compute_hyperflow()
-	stim = stim[range(max(intvl))]
+	stim = stim[range(intvl.stop)]
+	intvl = np.array(intvl)
 
 	# spks
 	_spks = np.array(group['spksR'], dtype=float)
@@ -84,6 +84,39 @@ def setup_repeat_data(
 	spks[badspks] = np.nan
 
 	return stim, spks, intvl
+
+
+def load_ephys(
+		group: h5py.Group,
+		kws_hf: dict = None,
+		rescale: float = 2.0,
+		dtype: str = 'float32', ):
+	kws_hf = kws_hf if kws_hf else {
+		'dim': 17,
+		'sres': 1,
+		'radius': 7,
+	}
+	hf = HyperFlow(
+		params=np.array(group['hf_params']),
+		center=np.array(group['hf_center']),
+		**kws_hf,
+	)
+	stim = hf.compute_hyperflow(dtype=dtype)
+	spks = np.array(group['spks'], dtype=float)
+	if 'badspks' in group:
+		mask = ~np.array(group['badspks'], dtype=bool)
+	else:
+		mask = np.ones(len(spks), dtype=bool)
+	stim_r, spks_r, good_r = setup_repeat_data(
+		group=group, kws_hf=kws_hf)
+
+	if rescale is not None:
+		stim_scale = np.max(np.abs(stim))
+		stim *= rescale / stim_scale
+		if stim_r is not None:
+			stim_r *= rescale / stim_scale
+
+	return stim, spks, mask, stim_r, spks_r, good_r
 
 
 def setup_supervised_data(
@@ -112,10 +145,10 @@ def time_embed(x, lags, idxs=None):
 
 
 def simulation_combos():
-	combos = [('fixate', i) for i in [0, 1, 2, 4, 8]]
-	combos += [('terrain', i) for i in [4, 8, 16]]
+	combos = [('fixate', i) for i in [0, 1, 2, 4]]
+	combos += [('terrain', i) for i in [1, 2, 4, 8]]
 	combos += [('transl', i) for i in [0, 2, 4]]
-	combos += [('obj', i) for i in [1, 2, 4, 8]]
+	combos += [('obj', i) for i in [1, 2, 4]]
 	return combos
 
 
@@ -177,7 +210,6 @@ def _main():
 		2: 1,
 		4: 3,
 		8: 5,
-		16: 10,
 	}
 	from utils.process import generate_simulation, save_simulation
 	save_dir = '/home/hadi/Documents/MTMST/data'

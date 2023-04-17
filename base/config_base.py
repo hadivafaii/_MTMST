@@ -36,7 +36,7 @@ class BaseConfig(object):
 
 	def save(self, save_dir: str = None, verbose: bool = False):
 		save_dir = save_dir if save_dir else self.save_dir
-		_save_config(self, save_dir, verbose)
+		_save_config(self, save_dir, False, verbose)
 
 	def get_all_dirs(self):
 		dirs = {k: getattr(self, k) for k in dir(self) if '_dir' in k}
@@ -56,7 +56,7 @@ class BaseConfig(object):
 					continue
 				useful[expt] = [0]
 		useful = dict(sorted(useful.items()))
-		self.useful_cells = useful
+		self.useful_yuwei = useful
 		return
 
 	def set_seed(self):
@@ -113,7 +113,7 @@ class BaseConfigTrain(object):
 		raise NotImplementedError
 
 	def save(self, save_dir: str, verbose: bool = False):
-		_save_config(self, save_dir, verbose)
+		_save_config(self, save_dir, True, verbose)
 
 	def _set_optim_kws(self, kws):
 		defaults = {
@@ -160,16 +160,24 @@ class BaseConfigTrain(object):
 		return
 
 
-def _save_config(obj, save_dir: str, verbose: bool = False):
+def _save_config(
+		obj,
+		save_dir: str,
+		with_base: bool = True,
+		verbose: bool = False, ):
 	fname = type(obj).__name__
 	file = pjoin(save_dir, f"{fname}.json")
 	if os.path.isfile(file):
 		return
 	params = inspect.signature(obj.__init__).parameters
+	if with_base:
+		base = type(obj).__bases__[0]
+		base = inspect.signature(base.__init__).parameters
+		params = {**params, **base}
 	vals = {
-		k: getattr(obj, k) for k, p in params.items()
-		if (int(p.kind) == 1 and hasattr(obj, k))
-		# first 'if' gets rid of args, kwargs
+		k: getattr(obj, k) for
+		k, p in params.items()
+		if _param_checker(k, p, obj)
 	}
 	save_obj(
 		obj=vals,
@@ -179,3 +187,8 @@ def _save_config(obj, save_dir: str, verbose: bool = False):
 		mode='json',
 	)
 	return
+
+
+def _param_checker(k, p, obj):
+	# second 'if' gets rid of args, kwargs
+	return k != 'self' and int(p.kind) == 1 and hasattr(obj, k)

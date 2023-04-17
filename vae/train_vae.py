@@ -217,10 +217,10 @@ class TrainerVAE(BaseTrainer):
 			}
 			to_write = {
 				**to_write,
-				'eval/r2': regr['regr/r2'].mean() * 100,
 				'eval/r': np.diag(regr['regr/r']).mean(),
-				'eval/r2_aux': regr['regr/aux/r2'].mean() * 100,
+				'eval/r2': np.nanmean(regr['regr/r2']) * 100,
 				'eval/r_aux': np.diag(regr['regr/aux/r']).mean(),
+				'eval/r2_aux': np.nanmean(regr['regr/aux/r2']) * 100,
 				'eval/disentang': regr['regr/d'],
 				'eval/complete': regr['regr/c'],
 			}
@@ -367,11 +367,13 @@ class TrainerVAE(BaseTrainer):
 		title += r'$(\mu \pm \sigma)$' + '\n'
 		name_groups = collections.defaultdict(list)
 		for i, lbl in enumerate(f):
-			k = '_'.join(lbl.split('_')[:-1])
+			k = lbl.split('_')[0]
 			name_groups[k].append(i)
-		for k, ids in name_groups.items():
+		for i, (k, ids) in enumerate(name_groups.items()):
 			title += f"{k} :  {rd[ids].mean():0.2f},"
 			title += ' ' * 5
+			if (i + 1) % 3 == 0:
+				title += '\n'
 		fig, _ = plot_heatmap(
 			r=regr['regr/r'],
 			title=title,
@@ -389,22 +391,27 @@ class TrainerVAE(BaseTrainer):
 			'x': self.dl_vld.dataset.f,
 			'y': regr['regr/r2'],
 		})
-		fig, _ = plot_bar(df, display=False)
+		fig, _ = plot_bar(df, tick_labelsize_x=10, display=False)
 		figs['fig/bar'] = fig
 		# aux
 		df = pd.DataFrame({
 			'x': self.dl_vld.dataset.f_aux,
 			'y': regr['regr/aux/r2'],
 		})
-		fig, _ = plot_bar(df, display=False)
+		fig, _ = plot_bar(df, tick_labelsize_x=10, display=False)
 		figs['fig/bar_aux'] = fig
 
 		# mutual info
-		regr = {
-			**regr,
-			**{f"regr/{k}": v for k, v in mi_analysis(
-				regr['z_vld'], self.dl_vld.dataset.g).items()},
+		mi = mi_analysis(
+			z=regr['z_vld'],
+			g=self.dl_vld.dataset.g,
+			n_jobs=20,
+		)
+		mi = {
+			f"regr/{k}": v for
+			k, v in mi.items()
 		}
+		regr = {**regr, **mi}
 		title = '_'.join(self.model.cfg.name().split('_')[:3])
 		mi_max = np.round(np.max(regr['regr/mi'], axis=1), 2)
 		mi_max = ', '.join([str(e) for e in mi_max])

@@ -69,21 +69,19 @@ class OpticFlow(object):
 			'fix_x': self.fix[:, 0],
 			'fix_y': self.fix[:, 1],
 		}
-		if self.category != 'obj':
+		if self.category == 'obj':
+			factors_aux = {}
+		else:
 			v_slf_polar = cart2polar(self.v_slf)
-			factors = {
-				**factors,
-				'slf_v_norm': v_slf_polar[:, 0],
-				'slf_v_theta': v_slf_polar[:, 1],
-				'slf_v_phi': v_slf_polar[:, 2],
-			}
+			factors['slf_v_norm'] = v_slf_polar[:, 0]
 			factors_aux = {
 				'slf_v_x': self.v_slf[:, 0],
 				'slf_v_y': self.v_slf[:, 1],
-				'slf_v_z': self.v_slf[:, 2],
 			}
-		else:
-			factors_aux = {}
+			if self.category != 'terrain':
+				factors['slf_v_theta'] = v_slf_polar[:, 1]
+				factors_aux['slf_v_z'] = self.v_slf[:, 2]
+			factors['slf_v_phi'] = v_slf_polar[:, 2]
 		sizes_eff = self.effective_sizes()
 		for i, obj in self.objects.items():
 			factors = {

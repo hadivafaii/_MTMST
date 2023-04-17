@@ -7,6 +7,13 @@ from sklearn import decomposition as sk_decomp
 from sklearn import model_selection as sk_modselect
 
 
+
+def normalize_global(x: np.ndarray, mu: float, sd: float):
+	if x is None:
+		return x
+	return (x - mu) / sd
+
+
 def max_r2(y: np.ndarray):
 	"""
 	:param y: neural responses, shape = (nc, ntrials, nt)

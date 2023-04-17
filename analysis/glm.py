@@ -1,9 +1,18 @@
 from .helper import *
+from base.dataset import load_ephys
 from vae.train_vae import TrainerVAE
-from analysis.opticflow import HyperFlow
-from base.common import get_act_fn, nn, F
-from base.dataset import setup_repeat_data
 from .linear import compute_sta, LinearModel
+from base.common import get_act_fn, nn, F, load_model_lite
+
+_ATTRS = [
+	'root', 'expt', 'n_pcs', 'n_lags', 'n_top_pix',
+	'rescale', 'kws_hf', 'kws_xt', 'normalize', 'dtype',
+]
+_FIT = [
+	'sta', 'temporal', 'spatial',
+	'best_lags', 'best_pix_all', 'sorted_pix',
+	'mu', 'sd', 'pca', 'glm', 'best_pix', 'perf', 'df',
+]
 
 
 class ReadoutGLM(object):
@@ -11,11 +20,11 @@ class ReadoutGLM(object):
 			self,
 			root: str,
 			expt: str,
-			tr: TrainerVAE,
+			tr: TrainerVAE = None,
 			n_pcs: int = 500,
 			n_lags: int = 13,
 			n_top_pix: int = 8,
-			rescale: float = 2.50,
+			rescale: float = 2.0,
 			normalize: bool = True,
 			dtype: str = 'float32',
 			verbose: bool = False,
@@ -40,19 +49,19 @@ class ReadoutGLM(object):
 		self.normalize = normalize
 		self.verbose = verbose
 		self.dtype = dtype
-		self.x = {}
-		self.x_r = {}
-		self.mus = {}
-		self.sds = {}
-		self.pca = {}
-		self.perf = {}
-		self.alphas = {}
-		self.models = {}
+		# load neuron attributes
+		self.has_repeats, self.nc = None, None
+		self.stim, self.stim_r = None, None
+		self.spks, self.spks_r = None, None
+		self.good, self.good_r = None, None
+		# fitted attributes
 		self.best_pix = {}
+		self.pca, self.glm = {}, {}
+		self.perf, self.df = {}, {}
 
 	def fit_readout(self):
-		stim, stim_r = self._load_neuron()
-		self._xtract(stim, stim_r)
+		self.load_neuron()
+		self._xtract()
 		self._sta()
 		self._best_lags()
 		self._best_pix()
@@ -68,18 +77,16 @@ class ReadoutGLM(object):
 			alphas=alphas if alphas else
 			np.logspace(-7, 1, num=9),
 		)
-		best_pc = None
-		best_model = None
-		best_alpha = None
+		best_a = None
 		best_r = -np.inf
 		perf_r = np.zeros(self.spatial.shape[1:])
 		perf_r2 = np.zeros(self.spatial.shape[1:])
-		for pix in self.top_pix[idx]:
+		for pix in self.sorted_pix[idx]:
 			pc = sk_decomp.PCA(
 				n_components=self.n_pcs,
 				svd_solver='full',
 			)
-			data = self.get_data(idx, pix)
+			data = self.get_data(idx, pix=pix)
 			data['x'] = pc.fit_transform(data['x'])
 			if self.has_repeats:
 				data['x_tst'] = pc.transform(data['x_tst'])
@@ -91,26 +98,27 @@ class ReadoutGLM(object):
 				# TODO: for final results take out full=False
 			i, j = pix
 			if self.has_repeats:
-				perf_r[i, j] = max(glm.r_tst.values())
-				perf_r2[i, j] = max(glm.r2_tst.values())
-				alpha, r = max(
-					glm.r_tst.items(),
+				a, r = max(
+					glm.df['r_tst'].items(),
 					key=lambda t: t[1],
 				)
+				perf_r[i, j] = glm.df['r_tst'].max()
+				perf_r2[i, j] = glm.df['r2_tst'].max()
 			else:
-				alpha, r = max(
-					dict(glm.df['r']).items(),
+				a, r = max(
+					glm.df['r'].items(),
 					key=lambda t: t[1],
 				)
 				perf_r[i, j] = r
 
 			if r > best_r:
-				best_alpha, best_r = alpha, r
-				best_model = glm.models[alpha]
+				best_r = r
+				best_a = a
+				self.perf[idx] = r
+				self.df[idx] = glm.df
+				self.glm[idx] = glm.models[a]
 				self.best_pix[idx] = (i, j)
-				self.x[idx] = data['x']
-				self.x_r[idx] = data['x_tst']
-				best_pc = pc
+				self.pca[idx] = pc
 
 			if self.verbose:
 				msg = '-' * 80
@@ -123,33 +131,48 @@ class ReadoutGLM(object):
 				print('~' * 80)
 				print('\n')
 
-		self.pca[idx] = best_pc
-		self.perf[idx] = best_r
-		self.alphas[idx] = best_alpha
-		self.models[idx] = best_model
-
 		if self.verbose:
 			msg = f"{self.expt}, "
 			msg += f"neuron # {idx};  "
-			msg += f"best alpha = {best_alpha:0.2g}, "
+			msg += f"best alpha = {best_a:0.2g}, "
 			msg += f"best_r = {best_r:0.3f}"
 			print(msg)
 
 		return perf_r, perf_r2
 
+	def validate(self, idx: int):
+		kws = dict(
+			tr=self.tr,
+			kws_process=self.kws_xt,
+			verbose=self.verbose,
+			dtype=self.dtype,
+			max_pool=False,
+		)
+		ftr, _ = push(stim=self.stim, **kws)
+		ftr_r, _ = push(stim=self.stim_r, **kws)
+		# global normalzie
+		ftr = normalize_global(ftr, self.mu, self.sd)
+		ftr_r = normalize_global(ftr_r, self.mu, self.sd)
+		data = self.get_data(idx, ftr, ftr_r)
+		data['x'] = self.pca[idx].transform(data['x'])
+		if self.has_repeats:
+			data['x_tst'] = self.pca[idx].transform(data['x_tst'])
+		return data
+
 	def forward(
 			self,
-			idx: int,
-			x: np.ndarray,
+			x: np.ndarray = None,
 			full: bool = False, ):
-		ftr, ftr_p = push(
-			stim=x,
+		if x is None:
+			x = self.stim
+		kws = dict(
 			tr=self.tr,
 			kws_process=self.kws_xt,
 			verbose=self.verbose,
 			dtype=self.dtype,
 			max_pool=True,
 		)
+		ftr, ftr_p = push(stim=x, **kws)
 		if full:
 			dims = (0, -2, -1)
 			var = np.var(ftr, axis=dims)
@@ -162,31 +185,103 @@ class ReadoutGLM(object):
 			)
 		else:
 			stats = {}
-		ftr = (ftr - self.mu) / self.sd
-		x = self.pca[idx].transform(ftr)
-		# TODO: push to get neural responses etc
-		return x, ftr, stats
+		ftr = normalize_global(ftr, self.mu, self.sd)
+		return ftr, ftr_p, stats
 
-	def get_data(self, idx: int, pix: Tuple[int, int] = None):
+	def get_data(
+			self,
+			idx: int,
+			ftr: np.ndarray = None,
+			ftr_r: np.ndarray = None,
+			pix: Tuple[int, int] = None, ):
+		if ftr is None:
+			ftr = self.ftr
+		if ftr_r is None:
+			ftr_r = self.ftr_r
 		if pix is None:
 			pix = self.best_pix[idx]
 		i, j = pix
 		kws = dict(
 			lag=self.best_lags[idx],
-			x=self.ftr[..., i, j],
+			x=ftr[..., i, j],
 			y=self.spks[:, idx],
 			good=self.good,
 		)
 		if self.has_repeats:
 			kws.update(dict(
-				x_tst=self.ftr_r[..., i, j],
+				x_tst=ftr_r[..., i, j],
 				y_tst=self.spks_r[idx],
 				good_tst=self.good_r,
 			))
 		return setup_data(**kws)
 
+	def load_neuron(self):
+		if self.nc is not None:
+			return self
+		f = h5py.File(self.tr.model.cfg.h_file)
+		g = f[self.root][self.expt]
+		self.has_repeats = g.attrs.get('has_repeats')
+		stim, spks, mask, stim_r, spks_r, good_r = load_ephys(
+			group=g,
+			kws_hf=self.kws_hf,
+			rescale=self.rescale,
+			dtype=self.dtype,
+		)
+		self.nc = spks.shape[1]
+		self.stim, self.stim_r = stim, stim_r
+		self.spks, self.spks_r = spks, spks_r
+		self.good, self.good_r = np.where(mask)[0], good_r
+		f.close()
+		if self.verbose:
+			print('[PROGRESS] neural data loaded')
+		return self
+
+	def load(self, fit_name: str, device: str):
+		path = '/home/hadi/Documents/MTMST/results'
+		path = pjoin(path, 'GLM', fit_name)
+		# pickle
+		file = f"{self.name()}.pkl"
+		file = pjoin(path, file)
+		with (open(file, 'rb')) as f:
+			pkl = pickle.load(f)
+		for k, v in pkl.items():
+			setattr(self, k, v)
+		# Trainer
+		if self.tr is None:
+			path = pjoin(path, 'Trainer')
+			self.tr, _ = load_model_lite(
+				path=path,
+				device=device,
+				verbose=self.verbose,
+			)
+		return self
+
+	def save(self, fit_name: str):
+		path = self.tr.model.cfg.results_dir
+		path = pjoin(path, 'GLM', fit_name)
+		path_tr = pjoin(path, 'Trainer')
+		os.makedirs(path_tr, exist_ok=True)
+
+		# save trainer
+		self.tr.save(path_tr)
+		self.tr.cfg.save(path_tr)
+		self.tr.model.cfg.save(path_tr)
+		# save pickle
+		fname = self.name()
+		save_obj(
+			obj=self.state_dict(),
+			file_name=fname,
+			save_dir=path,
+			mode='pkl',
+			verbose=self.verbose,
+		)
+		return
+
 	def state_dict(self):
-		pass
+		return {k: getattr(self, k) for k in _ATTRS + _FIT}
+
+	def name(self):
+		return f"{self.root}-{self.expt}"
 
 	def show(self, idx: int):
 		fig, axes = create_figure(
@@ -226,28 +321,7 @@ class ReadoutGLM(object):
 		plt.show()
 		return
 
-	def _load_neuron(self):
-		f = h5py.File(self.tr.model.cfg.h_file)
-		g = f[self.root][self.expt]
-		self.has_repeats = g.attrs.get('has_repeats')
-		stim, spks, mask, stim_r, spks_r, good_r = load_data(
-			group=g,
-			kws_hf=self.kws_hf,
-			rescale=self.rescale,
-			dtype=self.dtype,
-		)
-		self.nc = spks.shape[1]
-		self.mask = mask
-		self.spks = spks
-		self.good = np.where(mask)[0]
-		self.spks_r = spks_r
-		self.good_r = good_r
-		f.close()
-		if self.verbose:
-			print('[PROGRESS] neural data loaded')
-		return stim, stim_r
-
-	def _xtract(self, stim, stim_r):
+	def _xtract(self):
 		kws = dict(
 			tr=self.tr,
 			kws_process=self.kws_xt,
@@ -255,20 +329,13 @@ class ReadoutGLM(object):
 			dtype=self.dtype,
 			max_pool=False,
 		)
-		ftr = push(stim=stim, **kws)[0]
-		ftr_r = push(stim=stim_r, **kws)[0]
+		ftr, _ = push(stim=self.stim, **kws)
+		ftr_r, _ = push(stim=self.stim_r, **kws)
 		# normalize?
-		if self.normalize:
-			self.mu = ftr.mean()
-			self.sd = ftr.std()
-		else:
-			self.mu = 0
-			self.sd = 1
-		ftr = (ftr - self.mu) / self.sd
-		if ftr_r is not None:
-			ftr_r = (ftr_r - self.mu) / self.sd
-		self.ftr = ftr
-		self.ftr_r = ftr_r
+		self.mu = ftr.mean() if self.normalize else 1
+		self.sd = ftr.std() if self.normalize else 0
+		self.ftr = normalize_global(ftr, self.mu, self.sd)
+		self.ftr_r = normalize_global(ftr_r, self.mu, self.sd)
 		if self.verbose:
 			print('[PROGRESS] features extracted')
 		return
@@ -302,22 +369,23 @@ class ReadoutGLM(object):
 			range(self.n_lags + 1),
 		)
 		for idx, lag in looper:
-			norm = self.sta[idx][self.n_lags - lag]
+			t = self.n_lags - lag
+			norm = self.sta[idx][t]
 			norm = np.mean(norm ** 2, axis=0)
 			i, j = np.unravel_index(
 				np.argmax(norm), norm.shape)
-			self.best_pix_all[idx, lag] = i, j
+			self.best_pix_all[idx, t] = i, j
 		# best pix
 		self.spatial = np.zeros((self.nc, *self.sta.shape[-2:]))
 		for idx in range(self.nc):
 			norm = self.sta[idx] ** 2
 			norm = np.mean(norm, axis=(0, 1))
 			self.spatial[idx] = norm
-		self.top_pix = np.zeros((self.nc, self.n_top_pix, 2), dtype=int)
+		self.sorted_pix = np.zeros((self.nc, self.n_top_pix, 2), dtype=int)
 		for idx in range(self.nc):
 			top = np.array(list(zip(*np.unravel_index(np.argsort(
 				self.spatial[idx].ravel()), self.spatial.shape[1:]))))
-			self.top_pix[idx] = top[::-1][:self.n_top_pix]
+			self.sorted_pix[idx] = top[::-1][:self.n_top_pix]
 		return
 
 
@@ -331,7 +399,7 @@ def push(
 		max_pool: bool = False,
 		dtype: str = 'float32', ):
 	if stim is None:
-		return
+		return None, None
 	# feature sizes
 	assert kws_process['pool'] != 'none'
 	m = tr.select_model(use_ema)
@@ -363,11 +431,10 @@ def push(
 		b = min(a + tr.cfg.batch_size, len(x))
 		ftr = tr.to(stim[a:b])
 		ftr = m.xtract_ftr(ftr, full=True)[-1]
-		ftr = ftr[which]
+		ftr = process_ftrs(ftr[which], **kws_process)
+		x[a:b] = to_np(ftr).astype(dtype)
 		if max_pool:
 			xp[a:b] = to_np(mp(F.silu(ftr)).squeeze())
-		ftr = process_ftrs(ftr, **kws_process)
-		x[a:b] = to_np(ftr).astype(dtype)
 	return x, xp
 
 
@@ -394,36 +461,6 @@ def process_ftrs(
 			ftr[s] = pool(x)
 	ftr = torch.cat(list(ftr.values()), dim=1)
 	return ftr
-
-
-def load_data(
-		group: h5py.Group,
-		kws_hf: dict = None,
-		rescale: float = 2.25,
-		dtype: str = 'float32', ):
-	kws_hf = kws_hf if kws_hf else {
-		'dim': 17,
-		'sres': 1,
-		'radius': 6,
-	}
-	hf = HyperFlow(
-		params=np.array(group['hf_params']),
-		center=np.array(group['hf_center']),
-		**kws_hf,
-	)
-	stim = hf.compute_hyperflow(dtype=dtype)
-	spks = np.array(group['spks'], dtype=float)
-	mask = ~np.array(group['badspks'], dtype=bool)
-	stim_r, spks_r, good_r = setup_repeat_data(
-		group=group, kws_hf=kws_hf)
-
-	if rescale is not None:
-		stim_scale = np.max(np.abs(stim))
-		stim *= rescale / stim_scale
-		if stim_r is not None:
-			stim_r *= rescale / stim_scale
-
-	return stim, spks, mask, stim_r, spks_r, good_r
 
 
 def setup_data(

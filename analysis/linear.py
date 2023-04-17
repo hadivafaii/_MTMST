@@ -51,20 +51,26 @@ def regress(
 	# linear regression
 	lr = sk_linear.LinearRegression().fit(z, g)
 	g_pred = lr.predict(z_tst)
+	# performance
+	r = 1 - sp_dist.cdist(
+		XA=g_tst.T,
+		XB=g_pred.T,
+		metric='correlation',
+	)
+	r2 = sk_metric.r2_score(
+		y_true=g_tst,
+		y_pred=g_pred,
+		multioutput='raw_values',
+	)
+	r2[r2 < 0] = np.nan
 	# DCI
 	w = np.abs(lr.coef_)
 	w *= z.std(0).reshape(1, -1)
 	w /= g.std(0).reshape(-1, 1)
 	d, c = compute_dci(w)
 	output = {
-		'r2': sk_metric.r2_score(
-			y_true=g_tst,
-			y_pred=g_pred,
-			multioutput='raw_values'),
-		'r': 1 - sp_dist.cdist(
-			XA=g_tst.T,
-			XB=g_pred.T,
-			metric='correlation'),
+		'r': r,
+		'r2': r2,
 		'd': d,
 		'c': c,
 	}
@@ -125,7 +131,7 @@ class LinearModel(Obj):
 		self.y_tst = y_tst
 		if alphas is None:
 			alphas = [0.1, 1, 10, 100]
-		assert isinstance(alphas, Iterable)
+		assert isinstance(alphas, Collection)
 		self.alphas = alphas
 		self.kf = sk_modselect.KFold(
 			n_splits=n_folds,
@@ -135,17 +141,17 @@ class LinearModel(Obj):
 		self.models = {}
 		self.kers = {}
 		self.preds = {}
-		self.r_tst = {}
-		self.r2_tst = {}
-		self.df = None
+		self._init_df()
 
 		if self.verbose:
 			msg = f"Category: '{self.category}', "
 			msg += f"default params:\n{self.defaults}"
 			print(msg)
 
-	def fit_linear(self, fit_df: bool = True, **kwargs):
+	def fit_linear(self, xv_folds: bool = True, **kwargs):
 		kwargs = setup_kwargs(self.defaults, kwargs)
+		if xv_folds:
+			self.fit_xv(**kwargs)
 		for a in self.alphas:
 			kwargs['alpha'] = a
 			model = self.fn(**filter_kwargs(self.fn, kwargs))
@@ -158,97 +164,65 @@ class LinearModel(Obj):
 			self.models[a] = model
 			if self.x_tst is not None:
 				pred = model.predict(flatten_stim(self.x_tst))
-				self.r_tst[a] = sp_stats.pearsonr(self.y_tst, pred)[0]
-				self.r2_tst[a] = sk_metric.r2_score(self.y_tst, pred) * 100
+				r2 = sk_metric.r2_score(self.y_tst, pred) * 100
+				r = sp_stats.pearsonr(self.y_tst, pred)[0]
+				self.df.loc[a, 'r2_tst'] = r2
+				self.df.loc[a, 'r_tst'] = r
 				self.preds[a] = pred
-		if self.df is None and fit_df:
-			self.fit_df(**kwargs)
 		return self
 
-	def fit_df(self, **kwargs):
-		df = []
+	def fit_xv(self, **kwargs):
 		for a in self.alphas:
 			kwargs['alpha'] = a
-			nnll, r2, r = self._fit_folds(**kwargs)
-			df.append({
-				'alpha': [a] * len(r),
-				'fold': r.keys(),
-				'r': r.values(),
-				'r2': r2.values(),
-				'nnll': nnll.values(),
-			})
-		df = pd.DataFrame(merge_dicts(df))
-		df = df.groupby(['alpha']).mean()
-		df = df.drop(columns=['fold'])
-		self.df = df
+			nnll, r = self._fit_folds(**kwargs)
+			self.df.loc[a, 'nnll'] = np.nanmean(nnll)
+			self.df.loc[a, 'r'] = np.nanmean(r)
 		return self
 
 	def _fit_folds(self, full: bool = True, **kwargs):
-		nnll, r, r2 = {}, {}, {}
+		nnll, r = [], []
 		for fold, (trn, vld) in enumerate(self.kf.split(self.x)):
 			if not full and fold > 0:
 				continue
 			model = self.fn(**filter_kwargs(self.fn, kwargs))
 			model.fit(flatten_stim(self.x[trn]), self.y[trn])
 			pred = model.predict(flatten_stim(self.x[vld]))
-			nnll[fold] = null_adj_ll(self.y[vld], np.maximum(0, pred))
-			r[fold] = sp_stats.pearsonr(self.y[vld], pred)[0]
-			if self.x_tst is not None:
-				pred = model.predict(flatten_stim(self.x_tst))
-				r2[fold] = sk_metric.r2_score(self.y_tst, pred) * 100
-			else:
-				r2[fold] = None
-		return nnll, r2, r
+			nnll.append(null_adj_ll(self.y[vld], np.maximum(0, pred)))
+			r.append(sp_stats.pearsonr(self.y[vld], pred)[0])
+		return nnll, r
 
-	def show_pred(self, figsize=(7, 3.5)):
-		if not self.r2_tst:
+	def _init_df(self):
+		fill_vals = [np.nan] * len(self.alphas)
+		df = {
+			'alpha': self.alphas,
+			'r': fill_vals,
+			'nnll': fill_vals,
+		}
+		if self.x_tst is not None:
+			df.update({
+				'r_tst': fill_vals,
+				'r2_tst': fill_vals,
+			})
+		self.df = pd.DataFrame(df).set_index('alpha')
+		return
+
+	def show_pred(self, figsize=(9.0, 4.7)):
+		if not self.preds:
 			return
 		fig, ax = create_figure(1, 1, figsize)
 		ax.plot(self.y_tst, lw=1.8, color='k', label='true')
-		for i, (a, r2) in enumerate(self.r2_tst.items()):
+		for i, (a, pred) in enumerate(self.preds.items()):
+			r2 = self.df.loc[a, 'r2_tst']
 			lbl = r"$R^2 = $" + f"{r2:0.1f}%  ("
 			lbl += r"$\alpha = $" + f"{a:0.2g})"
-			ax.plot(self.preds[a], color=f'C{i}', label=lbl)
-		ax.legend(fontsize=9)
+			ax.plot(pred, color=f'C{i}', label=lbl)
+		ax.legend(fontsize=12)
 		leg = ax.get_legend()
 		if leg is not None:
 			leg.set_bbox_to_anchor((1.0, 1.025))
 		ax.grid()
 		plt.show()
 		return fig, ax
-
-
-def compute_sta_remove(
-		n_lags: int,
-		good: np.ndarray,
-		stim: np.ndarray,
-		spks: np.ndarray,
-		zscore: bool = True,
-		verbose: bool = False, ):
-	assert n_lags >= 0
-	nc = spks.shape[-1]
-	shape = stim.shape[1:]
-	stim = flatten_stim(stim)
-	if zscore:
-		stim = sp_stats.zscore(stim)
-	stim = np.expand_dims(stim, 0)
-	inds = good.copy()
-	inds = inds[inds > n_lags]
-	# compute sta
-	sta = np.zeros((nc, n_lags + 1, np.prod(shape)))
-	for t in tqdm(inds, disable=not verbose):
-		# zero n_lags allowed:
-		x = stim[:, t - n_lags: t + 1]
-		y = spks[t].reshape((-1, 1, 1))
-		sta += x * y
-	# divide by # spks
-	n = spks[inds].sum(0)
-	n = n.reshape((-1, 1, 1))
-	sta /= n
-	# reshape back to original
-	shape = (nc, n_lags + 1, *shape)
-	sta = sta.reshape(shape)
-	return sta
 
 
 def compute_sta(

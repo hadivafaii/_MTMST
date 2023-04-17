@@ -139,6 +139,65 @@ def print_num_params(module: nn.Module):
 	return
 
 
+def load_model_lite(
+		path: str,
+		device: str = 'cpu',
+		strict: bool = True,
+		verbose: bool = False, ):
+	# cfg model + trainer
+	cfg = pjoin(path, 'ConfigVAE.json')
+	cfg_train = pjoin(path, 'ConfigTrainVAE.json')
+	with open(cfg, 'r') as f:
+		cfg = json.load(f)
+	with open(cfg_train, 'r') as f:
+		cfg_train = json.load(f)
+	cfg = ConfigVAE(**cfg)
+	cfg_train = ConfigTrainVAE(**cfg_train)
+	# state dict
+	fname_pt = next(
+		f for f in os.listdir(path)
+		if f.split('.')[-1] == 'pt'
+	)
+	state_dict = pjoin(path, fname_pt)
+	state_dict = torch.load(state_dict)
+	ema = state_dict['model_ema'] is not None
+
+	# create model + trainer
+	from vae.vae2d import VAE
+	from vae.train_vae import TrainerVAE
+	model = VAE(cfg, verbose=verbose)
+	model.load_state_dict(
+		state_dict=state_dict['model'],
+		strict=strict,
+	)
+	trainer = TrainerVAE(
+		model=model,
+		cfg=cfg_train,
+		device=device,
+		verbose=verbose,
+		ema=ema,
+	)
+	if ema:
+		trainer.model_ema.load_state_dict(
+			state_dict=state_dict['model_ema'],
+			strict=strict,
+		)
+	# optim, etc.
+	trainer.optim.load_state_dict(
+		state_dict['optim'])
+	trainer.scaler.load_state_dict(
+		state_dict['scaler'])
+	if trainer.optim_schedule is not None:
+		trainer.optim_schedule.load_state_dict(
+			state_dict.get('scheduler', {}))
+	metadata = {
+		**state_dict['metadata'],
+		'file': fname_pt,
+		'path': path,
+	}
+	return trainer, metadata
+
+
 def load_model(
 		model_name: str,
 		fit_name: Union[str, int] = -1,
