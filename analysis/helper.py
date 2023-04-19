@@ -7,6 +7,9 @@ from sklearn import decomposition as sk_decomp
 from sklearn import model_selection as sk_modselect
 
 
+def compute_ed(s):
+	return sum(s)**2 / sum(s**2)
+
 
 def normalize_global(x: np.ndarray, mu: float, sd: float):
 	if x is None:

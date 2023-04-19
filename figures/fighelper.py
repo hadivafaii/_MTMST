@@ -116,8 +116,7 @@ def plot_latents_hist_full(
 		figsize=None,
 		figsize_x=3.25,
 		figsize_y=2.75,
-		tight_layout=True,
-		constrained_layout=False,
+		layout='tight',
 	)
 	kwargs = setup_kwargs(defaults, kwargs)
 
@@ -135,8 +134,7 @@ def plot_latents_hist_full(
 		ncols=ncols,
 		sharey='row',
 		figsize=figsize,
-		tight_layout=kwargs['tight_layout'],
-		constrained_layout=kwargs['constrained_layout'],
+		layout=kwargs['layout'],
 	)
 	looper = itertools.product(
 		range(nrows), range(ncols))
@@ -171,8 +169,7 @@ def plot_latents_hist(
 		figsize=None,
 		figsize_x=3.25,
 		figsize_y=2.75,
-		tight_layout=True,
-		constrained_layout=False,
+		layout='tight',
 	)
 	kwargs = setup_kwargs(defaults, kwargs)
 
@@ -189,8 +186,7 @@ def plot_latents_hist(
 		nrows=nrows,
 		ncols=ncols,
 		figsize=figsize,
-		tight_layout=kwargs['tight_layout'],
-		constrained_layout=kwargs['constrained_layout'],
+		layout=kwargs['layout'],
 	)
 	a = z.reshape((len(z), len(scales), -1))
 	for i in range(len(scales)):
@@ -230,7 +226,7 @@ def plot_opticflow_hist(
 		nrows=2,
 		ncols=3,
 		figsize=(12, 6),
-		constrained_layout=True,
+		layout='constrained',
 	)
 	sns.histplot(
 		rho.ravel(),
@@ -297,6 +293,7 @@ def show_opticflow(
 		'figsize': (9, 9),
 		'tick_spacing': 4,
 		'title_fontsize': 15,
+		'layout': 'constrained',
 		'scale': None,
 	}
 	kwargs = setup_kwargs(defaults, kwargs)
@@ -313,8 +310,7 @@ def show_opticflow(
 		sharex='all',
 		sharey='all',
 		figsize=kwargs['figsize'],
-		constrained_layout=True,
-		tight_layout=False,
+		layout=kwargs['layout'],
 	)
 	for i, ax in enumerate(axes.flat):
 		try:

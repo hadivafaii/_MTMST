@@ -62,7 +62,7 @@ def regress(
 		y_pred=g_pred,
 		multioutput='raw_values',
 	)
-	r2[r2 < 0] = np.nan
+	r2[r2 <= 0] = np.nan
 	# DCI
 	w = np.abs(lr.coef_)
 	w *= z.std(0).reshape(1, -1)

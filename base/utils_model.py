@@ -201,7 +201,7 @@ def load_model_lite(
 def load_model(
 		model_name: str,
 		fit_name: Union[str, int] = -1,
-		chkpt: int = -1,
+		checkpoint: int = -1,
 		device: str = 'cpu',
 		strict: bool = True,
 		verbose: bool = False,
@@ -212,9 +212,7 @@ def load_model(
 	with open(pjoin(path, fname), 'r') as f:
 		cfg = json.load(f)
 	cfg = ConfigVAE(**cfg)
-	fname = fname.split('.')[0]
-	fname = fname.replace('Config', '')
-	if fname == 'VAE':
+	if fname.split('.')[0] == 'ConfigVAE':
 		from vae.vae2d import VAE
 		model = VAE(cfg, verbose=verbose)
 	else:
@@ -236,7 +234,14 @@ def load_model(
 	fname_pt = [
 		f for f in files if
 		f.split('.')[-1] == 'pt'
-	][chkpt]
+	]
+	if checkpoint == -1:
+		fname_pt = fname_pt[-1]
+	else:
+		fname_pt = next(
+			f for f in fname_pt if
+			checkpoint == _chkpt(f)
+		)
 	state_dict = pjoin(path, fname_pt)
 	state_dict = torch.load(state_dict)
 	ema = state_dict['model_ema'] is not None
@@ -252,9 +257,7 @@ def load_model(
 	with open(pjoin(path, fname), 'r') as f:
 		cfg_train = json.load(f)
 	cfg_train = ConfigTrainVAE(**cfg_train)
-	fname = fname.split('.')[0]
-	fname = fname.replace('Config', '')
-	if fname == 'Train':
+	if fname.split('.')[0] == 'ConfigTrainVAE':
 		from vae.train_vae import TrainerVAE
 		trainer = TrainerVAE(
 			model=model,
@@ -344,6 +347,10 @@ class Module(nn.Module):
 		fname = pjoin(path, fname)
 		torch.save(self.state_dict(), fname)
 		return fname
+
+
+def _chkpt(f):
+	return int(f.split('_')[0].split('-')[-1])
 
 
 def _sort_fn(f: str):

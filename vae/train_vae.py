@@ -176,8 +176,8 @@ class TrainerVAE(BaseTrainer):
 				self.writer.add_scalar(k, v, gstep)
 			# reset average meters
 			if gstep % (self.cfg.log_freq * 10) == 0:
-				for m in [grads, nelbo]:
-					m.reset()
+				grads.reset()
+				nelbo.reset()
 
 		return nelbo.avg
 
@@ -191,8 +191,9 @@ class TrainerVAE(BaseTrainer):
 
 		# sample? plot?
 		if gstep is not None:
-			i = int(gstep / len(self.dl_trn))
-			cond = i % (self.cfg.eval_freq * 5) == 0
+			freq = max(20, self.cfg.eval_freq * 5)
+			ep = int(gstep / len(self.dl_trn))
+			cond = ep % freq == 0
 		else:
 			cond = True
 		cond = cond and n_samples is not None
@@ -459,14 +460,9 @@ def _setup_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser()
 
 	parser.add_argument(
-		"category",
-		help='stimulus category',
-		type=float,
-	)
-	parser.add_argument(
-		"n_obj",
-		help='number of objects',
-		type=int,
+		"sim",
+		help='simulation category',
+		type=str,
 	)
 	parser.add_argument(
 		"device",
@@ -474,166 +470,166 @@ def _setup_args() -> argparse.Namespace:
 		type=str,
 	)
 	parser.add_argument(
+		"--comment",
+		help='comment',
+		default=None,
+		type=str,
+	)
+	parser.add_argument(
 		"--n_ch",
 		help='# channels',
-		type=int,
 		default=32,
+		type=int,
 	)
 	# enc
 	parser.add_argument(
 		"--n_enc_cells",
 		help='# enc cells',
-		type=int,
 		default=2,
+		type=int,
 	)
 	parser.add_argument(
 		"--n_enc_nodes",
 		help='# enc nodes',
-		type=int,
 		default=2,
+		type=int,
 	)
 	# dec
 	parser.add_argument(
 		"--n_dec_cells",
 		help='# dec cells',
-		type=int,
 		default=2,
+		type=int,
 	)
 	parser.add_argument(
 		"--n_dec_nodes",
 		help='# dec nodes',
-		type=int,
 		default=1,
+		type=int,
 	)
 	# pre
 	parser.add_argument(
 		"--n_pre_cells",
 		help='# preprocessing cells',
-		type=int,
 		default=3,
+		type=int,
 	)
 	parser.add_argument(
 		"--n_pre_blocks",
 		help='# preprocessing blocks',
-		type=int,
 		default=1,
+		type=int,
 	)
 	# post
 	parser.add_argument(
 		"--n_post_cells",
 		help='# postprocessing cells',
-		type=int,
 		default=3,
+		type=int,
 	)
 	parser.add_argument(
 		"--n_post_blocks",
 		help='# postprocessing blocks',
-		type=int,
 		default=1,
+		type=int,
 	)
 	# latents
 	parser.add_argument(
 		"--n_latent_scales",
 		help='# latent scales',
+		default=3,
 		type=int,
-		default=2,
 	)
 	parser.add_argument(
 		"--n_latent_per_group",
 		help='# latents per group',
+		default=13,
 		type=int,
-		default=7,
 	)
 	parser.add_argument(
 		"--n_groups_per_scale",
 		help='# groups per scale',
+		default=12,
 		type=int,
-		default=20,
 	)
 	parser.add_argument(
 		"--spectral_norm",
 		help='spectral norm (0 = disable)',
-		type=int,
 		default=0,
+		type=int,
 	)
 	parser.add_argument(
 		"--ada_groups",
 		help='adaptive latent groups',
-		action='store_true',
 		default=True,
+		type=bool,
 	)
 	parser.add_argument(
 		"--compress",
 		help='compress latent space',
-		action='store_true',
 		default=True,
+		type=bool,
 	)
 	# training
 	parser.add_argument(
 		"--kl_beta",
 		help='kl loss beta coefficient',
+		default=0.1,
 		type=float,
-		default=1.0,
 	)
 	parser.add_argument(
 		"--lr",
 		help='learning rate',
+		default=0.002,
 		type=float,
-		default=0.003,
-	)
-	parser.add_argument(
-		"--lr_min",
-		help='min learning rate',
-		type=float,
-		default=1e-5,
 	)
 	parser.add_argument(
 		"--epochs",
 		help='# epochs',
+		default=200,
 		type=int,
-		default=2000,
 	)
 	parser.add_argument(
 		"--batch_size",
 		help='batch size',
-		type=int,
 		default=500,
+		type=int,
 	)
 	parser.add_argument(
 		"--warm_restart",
 		help='# warm restarts',
+		default=1,
 		type=int,
-		default=0,
 	)
 	parser.add_argument(
 		"--warmup_portion",
 		help='warmup portion',
-		type=float,
 		default=0.025,
+		type=float,
 	)
 	parser.add_argument(
 		"--optimizer",
 		help='optimizer',
-		type=str,
 		default='adamax_fast',
-	)
-	parser.add_argument(
-		"--period",
-		help='scheduler period',
-		type=float,
-		default=650.0,
+		type=str,
 	)
 	parser.add_argument(
 		"--lambda_norm",
 		help='weight regularization strength',
+		default=1e-3,
 		type=float,
-		default=1e-4,
 	)
 	parser.add_argument(
 		"--grad_clip",
 		help='gradient norm clipping',
+		default=400.0,
 		type=float,
-		default=1000.0,
+	)
+	parser.add_argument(
+		"--dry_run",
+		help='to make sure config is alright',
+		action='store_true',
+		default=False,
 	)
 	return parser.parse_args()
 
@@ -643,7 +639,7 @@ def _main():
 	print(args)
 
 	vae = VAE(ConfigVAE(
-		sim=f"{args.category}{args.n_obj}_dim-65_n-750k",
+		sim=args.sim,
 		n_ch=args.n_ch,
 		n_enc_cells=args.n_enc_cells,
 		n_enc_nodes=args.n_enc_nodes,
@@ -662,6 +658,9 @@ def _main():
 		balanced_recon=True,
 		residual_kl=True,
 		scale_init=False,
+		separable=False,
+		use_bn=False,
+		use_se=True,
 	))
 	tr = TrainerVAE(
 		model=vae,
@@ -674,12 +673,9 @@ def _main():
 			warmup_portion=args.warmup_portion,
 			optimizer=args.optimizer,
 			grad_clip=args.grad_clip,
-			scheduler_kws={
-				'T_max': args.period,
-				'eta_min': args.lr_min},
 			# kl
 			kl_beta=args.kl_beta,
-			kl_anneal_cycles=1,
+			kl_anneal_cycles=0,
 			kl_anneal_portion=0.3,
 			kl_const_portion=1e-4,
 			# weight reg
@@ -687,6 +683,24 @@ def _main():
 			lambda_anneal=True,
 			lambda_init=1e-7),
 	)
+	vae.print()
+	msg = '\n'.join([
+		f"VAE:\t\t{vae.cfg.name()}",
+		f"Trainer:\t{tr.cfg.name()}\n",
+	])
+	print(msg)
+
+	if args.comment is not None:
+		comment = '_'.join([
+			args.comment,
+			tr.cfg.name(),
+		])
+	else:
+		comment = tr.cfg.name()
+
+	if not args.dry_run:
+		tr.train(comment)
+
 	print(f"\n[PROGRESS] fitting VAE done ({now(True)}).\n")
 	return
 

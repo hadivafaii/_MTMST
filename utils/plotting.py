@@ -293,6 +293,7 @@ def create_figure(
 		nrows: int = 1,
 		ncols: int = 1,
 		figsize: Tuple[float, float] = None,
+		layout: str = None,
 		sharex: str = 'none',
 		sharey: str = 'none',
 		style: str = 'ticks',
@@ -300,11 +301,26 @@ def create_figure(
 		hspace: float = None,
 		width_ratios: List[float] = None,
 		height_ratios: List[float] = None,
-		constrained_layout: bool = False,
-		tight_layout: bool = False,
 		reshape: bool = False,
 		dpi: float = None,
 		**kwargs, ):
+	"""
+	:param nrows:
+	:param ncols:
+	:param figsize:
+	:param layout: {'constrained', 'compressed', 'tight', None}
+	:param sharex:
+	:param sharey:
+	:param style:
+	:param wspace:
+	:param hspace:
+	:param width_ratios:
+	:param height_ratios:
+	:param reshape:
+	:param dpi:
+	:param kwargs:
+	:return: fig, axes
+	"""
 	set_style(style)
 	figsize = figsize if figsize else plt.rcParams.get('figure.figsize')
 	dpi = dpi if dpi else plt.rcParams.get('figure.dpi')
@@ -314,15 +330,14 @@ def create_figure(
 		ncols=ncols,
 		sharex=sharex,
 		sharey=sharey,
-		tight_layout=tight_layout,
-		constrained_layout=constrained_layout,
+		layout=layout,
 		figsize=figsize,
-		dpi=dpi,
 		gridspec_kw={
 			'wspace': wspace,
 			'hspace': hspace,
 			'width_ratios': width_ratios,
 			'height_ratios': height_ratios},
+		dpi=dpi,
 		**kwargs,
 	)
 	if nrows * ncols > 1 and reshape:

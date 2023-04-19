@@ -2,16 +2,16 @@ from .helper import *
 from base.dataset import load_ephys
 from vae.train_vae import TrainerVAE
 from .linear import compute_sta, LinearModel
-from base.common import get_act_fn, nn, F, load_model_lite
+from base.common import get_act_fn, nn, F, load_model_lite, load_model
 
 _ATTRS = [
-	'root', 'expt', 'n_pcs', 'n_lags', 'n_top_pix',
+	'root', 'expt', 'glm', 'n_pcs', 'n_lags', 'n_top_pix',
 	'rescale', 'kws_hf', 'kws_xt', 'normalize', 'dtype',
 ]
 _FIT = [
 	'sta', 'temporal', 'spatial',
 	'best_lags', 'best_pix_all', 'sorted_pix',
-	'mu', 'sd', 'pca', 'glm', 'best_pix', 'perf', 'df',
+	'mu', 'sd', 'pca', 'mod', 'best_pix', 'perf', 'df',
 ]
 
 
@@ -20,27 +20,31 @@ class ReadoutGLM(object):
 			self,
 			root: str,
 			expt: str,
-			tr: TrainerVAE = None,
+			tr: TrainerVAE,
 			n_pcs: int = 500,
-			n_lags: int = 13,
+			n_lags: int = 20,
 			n_top_pix: int = 8,
 			rescale: float = 2.0,
-			normalize: bool = True,
 			dtype: str = 'float32',
+			normalize: bool = True,
 			verbose: bool = False,
 			**kwargs,
 	):
 		super(ReadoutGLM, self).__init__()
+		self.tr = tr
 		self.root = root
 		self.expt = expt
-		self.tr = tr
 		self.n_pcs = n_pcs
 		self.n_lags = n_lags
 		self.n_top_pix = n_top_pix
 		self.rescale = rescale
 		self.kws_hf = {
 			k: kwargs[k] if k in kwargs else v for k, v
-			in dict(dim=17, sres=1, radius=7).items()
+			in dict(dim=17, sres=1, radius=8.0).items()
+		}
+		self.kws_push = {
+			k: kwargs[k] if k in kwargs else v for k, v
+			in dict(which='enc', use_ema=False).items()
 		}
 		self.kws_xt = {
 			k: kwargs[k] if k in kwargs else v for k, v in
@@ -49,14 +53,15 @@ class ReadoutGLM(object):
 		self.normalize = normalize
 		self.verbose = verbose
 		self.dtype = dtype
-		# load neuron attributes
+		self.glm = None
+		# neuron attributes
 		self.has_repeats, self.nc = None, None
 		self.stim, self.stim_r = None, None
 		self.spks, self.spks_r = None, None
 		self.good, self.good_r = None, None
 		# fitted attributes
 		self.best_pix = {}
-		self.pca, self.glm = {}, {}
+		self.pca, self.mod = {}, {}
 		self.perf, self.df = {}, {}
 
 	def fit_readout(self):
@@ -70,13 +75,22 @@ class ReadoutGLM(object):
 	def fit_neuron(
 			self,
 			idx: int,
+			glm: bool = False,
 			alphas: List[float] = None,
 			**kwargs, ):
-		kws_glm = dict(
-			category='PoissonRegressor',
-			alphas=alphas if alphas else
-			np.logspace(-7, 1, num=9),
-		)
+		self.glm = glm
+		if self.glm:
+			kws_model = dict(
+				category='PoissonRegressor',
+				alphas=alphas if alphas else
+				np.logspace(-7, 1, num=9),
+			)
+		else:
+			kws_model = dict(
+				category='Ridge',
+				alphas=alphas if alphas else
+				np.logspace(-1, 7, num=9),
+			)
 		best_a = None
 		best_r = -np.inf
 		perf_r = np.zeros(self.spatial.shape[1:])
@@ -90,23 +104,23 @@ class ReadoutGLM(object):
 			data['x'] = pc.fit_transform(data['x'])
 			if self.has_repeats:
 				data['x_tst'] = pc.transform(data['x_tst'])
-			kws_glm.update(data)
+			kws_model.update(data)
 			with warnings.catch_warnings():
 				warnings.simplefilter("ignore")
-				glm = LinearModel(**kws_glm).fit_linear(
-					fit_df=not self.has_repeats, **kwargs)
+				linmod = LinearModel(**kws_model).fit_linear(
+					xv_folds=not self.has_repeats, **kwargs)
 				# TODO: for final results take out full=False
 			i, j = pix
 			if self.has_repeats:
 				a, r = max(
-					glm.df['r_tst'].items(),
+					linmod.df['r_tst'].items(),
 					key=lambda t: t[1],
 				)
-				perf_r[i, j] = glm.df['r_tst'].max()
-				perf_r2[i, j] = glm.df['r2_tst'].max()
+				perf_r[i, j] = linmod.df['r_tst'].max()
+				perf_r2[i, j] = linmod.df['r2_tst'].max()
 			else:
 				a, r = max(
-					glm.df['r'].items(),
+					linmod.df['r'].items(),
 					key=lambda t: t[1],
 				)
 				perf_r[i, j] = r
@@ -115,8 +129,8 @@ class ReadoutGLM(object):
 				best_r = r
 				best_a = a
 				self.perf[idx] = r
-				self.df[idx] = glm.df
-				self.glm[idx] = glm.models[a]
+				self.df[idx] = linmod.df
+				self.mod[idx] = linmod.models[a]
 				self.best_pix[idx] = (i, j)
 				self.pca[idx] = pc
 
@@ -126,8 +140,8 @@ class ReadoutGLM(object):
 				msg += f"neuron # {idx}; "
 				msg += f"pix: (i, j) = ({i}, {j})"
 				print(msg)
-				print(glm.df)
-				glm.show_pred()
+				print(linmod.df)
+				linmod.show_pred()
 				print('~' * 80)
 				print('\n')
 
@@ -147,6 +161,7 @@ class ReadoutGLM(object):
 			verbose=self.verbose,
 			dtype=self.dtype,
 			max_pool=False,
+			**self.kws_push,
 		)
 		ftr, _ = push(stim=self.stim, **kws)
 		ftr_r, _ = push(stim=self.stim_r, **kws)
@@ -171,6 +186,7 @@ class ReadoutGLM(object):
 			verbose=self.verbose,
 			dtype=self.dtype,
 			max_pool=True,
+			**self.kws_push,
 		)
 		ftr, ftr_p = push(stim=x, **kws)
 		if full:
@@ -180,7 +196,7 @@ class ReadoutGLM(object):
 			stats = dict(
 				var=var,
 				mu2=mu2,
-				snr2=var / mu2,
+				snr2=mu2 / var,
 				s=sp_lin.svdvals(ftr_p),
 			)
 		else:
@@ -237,10 +253,12 @@ class ReadoutGLM(object):
 		return self
 
 	def load(self, fit_name: str, device: str):
-		path = '/home/hadi/Documents/MTMST/results'
-		path = pjoin(path, 'GLM', fit_name)
+		path = 'Documents/MTMST/results'
+		path = pjoin(os.environ['HOME'], path)
+		root_name, pickle_name = self.name()
+		path = pjoin(path, root_name, fit_name)
 		# pickle
-		file = f"{self.name()}.pkl"
+		file = f"{pickle_name}.pkl"
 		file = pjoin(path, file)
 		with (open(file, 'rb')) as f:
 			pkl = pickle.load(f)
@@ -258,19 +276,25 @@ class ReadoutGLM(object):
 
 	def save(self, fit_name: str):
 		path = self.tr.model.cfg.results_dir
-		path = pjoin(path, 'GLM', fit_name)
+		root_name, pickle_name = self.name()
+		path = pjoin(path, root_name, fit_name)
 		path_tr = pjoin(path, 'Trainer')
 		os.makedirs(path_tr, exist_ok=True)
 
 		# save trainer
-		self.tr.save(path_tr)
-		self.tr.cfg.save(path_tr)
-		self.tr.model.cfg.save(path_tr)
+		cond = any(
+			f for f in os.listdir(path_tr)
+			if f.endswith('.pt')
+		)
+		if not cond:
+			self.tr.save(path_tr)
+			self.tr.cfg.save(path_tr)
+			self.tr.model.cfg.save(path_tr)
+
 		# save pickle
-		fname = self.name()
 		save_obj(
 			obj=self.state_dict(),
-			file_name=fname,
+			file_name=pickle_name,
 			save_dir=path,
 			mode='pkl',
 			verbose=self.verbose,
@@ -281,7 +305,9 @@ class ReadoutGLM(object):
 		return {k: getattr(self, k) for k in _ATTRS + _FIT}
 
 	def name(self):
-		return f"{self.root}-{self.expt}"
+		root_name = 'GLM' if self.glm else 'Ridge'
+		pickle_name = f"{self.root}-{self.expt}"
+		return root_name, pickle_name
 
 	def show(self, idx: int):
 		fig, axes = create_figure(
@@ -328,12 +354,13 @@ class ReadoutGLM(object):
 			verbose=self.verbose,
 			dtype=self.dtype,
 			max_pool=False,
+			**self.kws_push,
 		)
 		ftr, _ = push(stim=self.stim, **kws)
 		ftr_r, _ = push(stim=self.stim_r, **kws)
 		# normalize?
-		self.mu = ftr.mean() if self.normalize else 1
-		self.sd = ftr.std() if self.normalize else 0
+		self.mu = ftr.mean() if self.normalize else 0
+		self.sd = ftr.std() if self.normalize else 1
 		self.ftr = normalize_global(ftr, self.mu, self.sd)
 		self.ftr_r = normalize_global(ftr_r, self.mu, self.sd)
 		if self.verbose:
@@ -485,17 +512,186 @@ def setup_data(
 def _setup_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser()
 
-	# TODO
 	parser.add_argument(
-		"tmp1",
-		help='tmp 1',
+		"name",
+		help='fit name',
+		type=str,
+	)
+	parser.add_argument(
+		"device",
+		help='cuda:n',
+		type=str,
+	)
+	parser.add_argument(
+		"--model_name",
+		help='which VAE to load',
+		default=None,
+		type=str,
+	)
+	parser.add_argument(
+		"--fit_name",
+		help='which VAE fit to load',
+		default=None,
+		type=str,
+	)
+	parser.add_argument(
+		"--checkpoint",
+		help='checkpoint',
+		default=-1,
+		type=int,
+	)
+	# Readout related
+	parser.add_argument(
+		"--n_pcs",
+		help='# PC components',
+		default=500,
 		type=int,
 	)
 	parser.add_argument(
-		"--tmp",
-		help='tmp',
+		"--n_lags",
+		help='# time lags',
+		default=20,
 		type=int,
+	)
+	parser.add_argument(
+		"--n_top_pix",
+		help='# top pixels to loop over',
+		default=8,
+		type=int,
+	)
+	parser.add_argument(
+		"--rescale",
+		help='HyperFlow stim rescale',
+		default=2.0,
+		type=float,
+	)
+	parser.add_argument(
+		"--radius",
+		help='HyperFlow stim radius',
+		default=8.0,
+		type=float,
+	)
+	parser.add_argument(
+		"--normalize",
+		help='normalize before PCA?',
+		default=True,
+		type=bool,
+	)
+	parser.add_argument(
+		"--which",
+		help="which to use: {'enc', 'dec'}",
+		default='enc',
+		type=str,
+	)
+	parser.add_argument(
+		"--use_ema",
+		help='use ema or main model?',
+		default=False,
+		type=bool,
+	)
+	parser.add_argument(
+		"--glm",
+		help='GLM or Ridge?',
+		default=False,
+		type=bool,
+	)
+	# VAE related
+	parser.add_argument(
+		"--n_ch",
+		help='# channels',
+		default=32,
+		type=int,
+	)
+	parser.add_argument(
+		"--n_enc_cells",
+		help='# enc cells',
+		default=2,
+		type=int,
+	)
+	parser.add_argument(
+		"--n_enc_nodes",
+		help='# enc nodes',
+		default=2,
+		type=int,
+	)
+	parser.add_argument(
+		"--n_dec_cells",
+		help='# dec cells',
+		default=2,
+		type=int,
+	)
+	parser.add_argument(
+		"--n_dec_nodes",
+		help='# dec nodes',
 		default=1,
+		type=int,
+	)
+	parser.add_argument(
+		"--n_pre_cells",
+		help='# preprocessing cells',
+		default=3,
+		type=int,
+	)
+	parser.add_argument(
+		"--n_pre_blocks",
+		help='# preprocessing blocks',
+		default=1,
+		type=int,
+	)
+	parser.add_argument(
+		"--n_post_cells",
+		help='# postprocessing cells',
+		default=3,
+		type=int,
+	)
+	parser.add_argument(
+		"--n_post_blocks",
+		help='# postprocessing blocks',
+		default=1,
+		type=int,
+	)
+	parser.add_argument(
+		"--n_latent_scales",
+		help='# latent scales',
+		default=3,
+		type=int,
+	)
+	parser.add_argument(
+		"--n_latent_per_group",
+		help='# latents per group',
+		default=13,
+		type=int,
+	)
+	parser.add_argument(
+		"--n_groups_per_scale",
+		help='# groups per scale',
+		default=12,
+		type=int,
+	)
+	parser.add_argument(
+		"--ada_groups",
+		help='adaptive latent groups',
+		default=True,
+		type=bool,
+	)
+	parser.add_argument(
+		"--compress",
+		help='compress latent space',
+		default=True,
+		type=bool,
+	)
+	# etc.
+	parser.add_argument(
+		"--verbose",
+		help='verbose?',
+		default=False,
+		type=bool,
+	)
+	parser.add_argument(
+		"--dry_run",
+		help='to make sure config is alright',
+		action='store_true',
+		default=False,
 	)
 	return parser.parse_args()
 
@@ -504,10 +700,47 @@ def _main():
 	args = _setup_args()
 	print(args)
 
-	# TODO: create a saving framework
-	#  Then run this
+	# TODO: if model name is None, then create a Reservoir
+	#  else: replace the default VAE config in args using the loaded VAE
+	tr, metadata = load_model(
+		model_name='fixate1_k-32_z-13x[3,6,12]_enc(1x3)-dec(1x2)-pre(1x3)-post(1x3)',
+		fit_name='ep200-b500-lr(0.002)_beta(0.1:0x0.3)_lamb(0.001)_gr(400.0)_(2023_04_18,16:48)',
+		device=args.device,
+		checkpoint=70,
+	)
+	nf = sum(tr.model.ftr_sizes()[0].values())
+	fit_name = '_'.join([
+		args.name,
+		f"nf-{nf}",
+		f"({now(True)})",
+	])
+	print(f"\nname: {fit_name}")
 
-	# stuff
+	kws = dict(
+		tr=tr,
+		root='YUWEI',
+		n_pcs=args.n_pcs,
+		n_lags=args.n_lags,
+		n_top_pix=args.n_top_pix,
+		rescale=args.rescale,
+		normalize=args.normalize,
+		verbose=args.verbose,
+		# kwargs
+		which=args.which,
+		radius=args.radius,
+		use_ema=args.use_ema,
+	)
+	for expt, useful in tr.model.cfg.useful_yuwei.items():
+		ro = ReadoutGLM(expt=expt, **kws).fit_readout()
+		for idx in useful:
+			perf_r, _ = ro.fit_neuron(idx, args.glm, full=True)
+		ro.save(fit_name)
+	# if args.verbose:
+	# ro.show(0)
+	# sns.heatmap(perf_r, square=True, annot=True)
+	# plt.show()
+	# TODO: save args as JSON file in the directory .../Ridge/name_date/
+
 	print(f"\n[PROGRESS] fitting ReadoutGLM done {now(True)}.\n")
 	return
 

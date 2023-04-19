@@ -1,10 +1,10 @@
 #!/bin/bash
 
-sim=${1}
+name=${1}
 device=${2}
 
-if [ -z "${sim}" ]; then
-  read -rp "enter simulation category: " sim
+if [ -z "${name}" ]; then
+  read -rp "enter fit name: " name
 fi
 if [ -z "${device}" ]; then
   read -rp "enter device: " device
@@ -17,7 +17,7 @@ args="${*}"
 
 cd ..
 
-fit="python3 -m vae.train_vae ${sim} ${device} ${args}"
+fit="python3 -m analysis.glm ${name} ${device} ${args}"
 eval "${fit}"
 
 printf '**************************************************************************\n'

@@ -94,7 +94,7 @@ def load_ephys(
 	kws_hf = kws_hf if kws_hf else {
 		'dim': 17,
 		'sres': 1,
-		'radius': 7,
+		'radius': 8.0,
 	}
 	hf = HyperFlow(
 		params=np.array(group['hf_params']),
@@ -163,26 +163,26 @@ def _setup_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--n_batch",
 		help='# frames per batch',
-		type=int,
 		default=int(5e4),
+		type=int,
 	)
 	parser.add_argument(
 		"--dim",
 		help='dimensionality',
-		type=int,
 		default=17,
+		type=int,
 	)
 	parser.add_argument(
 		"--min_obj_size",
 		help='minimum acceptable object size',
-		type=float,
 		default=3.5,
+		type=float,
 	)
 	parser.add_argument(
 		"--dtype",
 		help='dtype for alpha_dot',
-		type=str,
 		default='float32',
+		type=str,
 	)
 	return parser.parse_args()
 

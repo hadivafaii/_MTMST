@@ -9,8 +9,8 @@ class BaseConfig(object):
 			self,
 			name: str,
 			seed: int = 0,
+			save: bool = True,
 			full: bool = False,
-			save: bool = False,
 			h_file: str = 'ALL_tres25',
 			sim_path: str = 'fixate1_dim-65_n-750k',
 			base_dir: str = 'Documents/MTMST',
@@ -92,6 +92,8 @@ class BaseConfigTrain(object):
 		self.lr = lr
 		self.epochs = epochs
 		self.batch_size = batch_size
+		assert warm_restart >= 0
+		assert warmup_portion >= 0
 		self.warm_restart = warm_restart
 		self.warmup_portion = warmup_portion
 		assert optimizer in _OPTIM_CHOICES,\
@@ -126,7 +128,7 @@ class BaseConfigTrain(object):
 		return
 
 	def _set_scheduler_kws(self, kws):
-		lr_min = 1e-5
+		lr_min = 1e-4
 		period = self.epochs * (1 - self.warmup_portion)
 		period /= (2 * self.warm_restart + 1)
 		if self.scheduler_type == 'cosine':

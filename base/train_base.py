@@ -47,13 +47,13 @@ class BaseTrainer(object):
 
 	def train(
 			self,
-			epochs: Union[int, range] = None,
 			comment: str = None,
+			epochs: Union[int, range] = None,
 			save: bool = True, ):
 		epochs = epochs if epochs else self.cfg.epochs
 		assert isinstance(epochs, (int, range)), "allowed: {int, range}"
 		epochs = range(epochs) if isinstance(epochs, int) else epochs
-		comment if comment else self.cfg.name()
+		comment = comment if comment else self.cfg.name()
 		kwargs = dict(n_iters_warmup=int(np.round(
 			self.n_iters * self.cfg.warmup_portion)))
 		if save:
@@ -133,7 +133,8 @@ class BaseTrainer(object):
 		state_dict = {
 			'metadata': {
 				'checkpoint': checkpoint,
-				'global_step': global_step},
+				'global_step': global_step,
+				'stats': self.stats},
 			'model': self.model.state_dict(),
 			'model_ema': self.model_ema.state_dict()
 			if self.model_ema is not None else None,
