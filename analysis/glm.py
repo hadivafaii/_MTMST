@@ -1,42 +1,44 @@
 from .helper import *
 from base.dataset import load_ephys
-from vae.train_vae import TrainerVAE
+from vae.train_vae import TrainerVAE, VAE
 from .linear import compute_sta, LinearModel
-from base.common import get_act_fn, nn, F, load_model_lite, load_model
+from base.common import (
+	load_model_lite, load_model,
+	get_act_fn, nn, F,
+)
 
 _ATTRS = [
 	'root', 'expt', 'glm', 'n_pcs', 'n_lags', 'n_top_pix',
 	'rescale', 'kws_hf', 'kws_xt', 'normalize', 'dtype',
 ]
 _FIT = [
-	'sta', 'temporal', 'spatial',
-	'best_lags', 'best_pix_all', 'sorted_pix',
+	'sta', 'temporal', 'spatial', 'best_lags',
+	'best_pix_all', 'sorted_pix', 'has_repeats', 'max_perf',
 	'mu', 'sd', 'pca', 'mod', 'best_pix', 'perf', 'df',
 ]
 
 
-class ReadoutGLM(object):
+class Readout(object):
 	def __init__(
 			self,
 			root: str,
 			expt: str,
-			tr: TrainerVAE,
+			tr: TrainerVAE = None,
+			n_lags: int = 6,
 			n_pcs: int = 500,
-			n_lags: int = 20,
-			n_top_pix: int = 8,
+			n_top_pix: int = 9,
 			rescale: float = 2.0,
 			dtype: str = 'float32',
 			normalize: bool = True,
 			verbose: bool = False,
 			**kwargs,
 	):
-		super(ReadoutGLM, self).__init__()
+		super(Readout, self).__init__()
 		self.tr = tr
 		self.root = root
 		self.expt = expt
 		self.n_pcs = n_pcs
 		self.n_lags = n_lags
-		self.n_top_pix = n_top_pix
 		self.rescale = rescale
 		self.kws_hf = {
 			k: kwargs[k] if k in kwargs else v for k, v
@@ -50,21 +52,30 @@ class ReadoutGLM(object):
 			k: kwargs[k] if k in kwargs else v for k, v in
 			dict(scale=4, pool='max', act_fn='swish').items()
 		}
+		self.n_top_pix = min(n_top_pix, self.kws_xt['scale'] ** 2)
 		self.normalize = normalize
 		self.verbose = verbose
 		self.dtype = dtype
 		self.glm = None
 		# neuron attributes
-		self.has_repeats, self.nc = None, None
+		self.max_perf = None
 		self.stim, self.stim_r = None, None
 		self.spks, self.spks_r = None, None
 		self.good, self.good_r = None, None
+		self.has_repeats, self.nc = None, None
 		# fitted attributes
+		self.logger = None
 		self.best_pix = {}
 		self.pca, self.mod = {}, {}
 		self.perf, self.df = {}, {}
 
-	def fit_readout(self):
+	def fit_readout(self, path: str = None):
+		if path is not None:
+			self.logger = make_logger(
+				path=path,
+				name=type(self).__name__,
+				level=logging.WARNING,
+			)
 		self.load_neuron()
 		self._xtract()
 		self._sta()
@@ -89,7 +100,7 @@ class ReadoutGLM(object):
 			kws_model = dict(
 				category='Ridge',
 				alphas=alphas if alphas else
-				np.logspace(-1, 7, num=9),
+				np.logspace(-4, 8, num=13),
 			)
 		best_a = None
 		best_r = -np.inf
@@ -105,24 +116,16 @@ class ReadoutGLM(object):
 			if self.has_repeats:
 				data['x_tst'] = pc.transform(data['x_tst'])
 			kws_model.update(data)
+			linmod = LinearModel(**kws_model)
 			with warnings.catch_warnings():
 				warnings.simplefilter("ignore")
-				linmod = LinearModel(**kws_model).fit_linear(
-					xv_folds=not self.has_repeats, **kwargs)
-				# TODO: for final results take out full=False
+				linmod.fit_linear(**kwargs)
 			i, j = pix
+			a, r = linmod.best_alpha()
 			if self.has_repeats:
-				a, r = max(
-					linmod.df['r_tst'].items(),
-					key=lambda t: t[1],
-				)
 				perf_r[i, j] = linmod.df['r_tst'].max()
 				perf_r2[i, j] = linmod.df['r2_tst'].max()
 			else:
-				a, r = max(
-					linmod.df['r'].items(),
-					key=lambda t: t[1],
-				)
 				perf_r[i, j] = r
 
 			if r > best_r:
@@ -243,28 +246,29 @@ class ReadoutGLM(object):
 			rescale=self.rescale,
 			dtype=self.dtype,
 		)
-		self.nc = spks.shape[1]
+		if self.has_repeats:
+			self.max_perf = np.sqrt(max_r2(spks_r))
+		self.good, self.good_r = np.where(mask)[0], good_r
 		self.stim, self.stim_r = stim, stim_r
 		self.spks, self.spks_r = spks, spks_r
-		self.good, self.good_r = np.where(mask)[0], good_r
+		self.nc = spks.shape[1]
 		f.close()
+
 		if self.verbose:
 			print('[PROGRESS] neural data loaded')
 		return self
 
-	def load(self, fit_name: str, device: str):
-		path = 'Documents/MTMST/results'
-		path = pjoin(os.environ['HOME'], path)
-		root_name, pickle_name = self.name()
-		path = pjoin(path, root_name, fit_name)
-		# pickle
-		file = f"{pickle_name}.pkl"
+	def load(self, fit_name: str, device: str, glm: bool = False):
+		self.glm = glm
+		path = _setup_path(fit_name, glm)
+		# load pickle
+		file = f"{self.name()}.pkl"
 		file = pjoin(path, file)
 		with (open(file, 'rb')) as f:
 			pkl = pickle.load(f)
 		for k, v in pkl.items():
 			setattr(self, k, v)
-		# Trainer
+		# load Trainer
 		if self.tr is None:
 			path = pjoin(path, 'Trainer')
 			self.tr, _ = load_model_lite(
@@ -274,10 +278,7 @@ class ReadoutGLM(object):
 			)
 		return self
 
-	def save(self, fit_name: str):
-		path = self.tr.model.cfg.results_dir
-		root_name, pickle_name = self.name()
-		path = pjoin(path, root_name, fit_name)
+	def save(self, path: str):
 		path_tr = pjoin(path, 'Trainer')
 		os.makedirs(path_tr, exist_ok=True)
 
@@ -294,7 +295,7 @@ class ReadoutGLM(object):
 		# save pickle
 		save_obj(
 			obj=self.state_dict(),
-			file_name=pickle_name,
+			file_name=self.name(),
 			save_dir=path,
 			mode='pkl',
 			verbose=self.verbose,
@@ -305,13 +306,11 @@ class ReadoutGLM(object):
 		return {k: getattr(self, k) for k in _ATTRS + _FIT}
 
 	def name(self):
-		root_name = 'GLM' if self.glm else 'Ridge'
-		pickle_name = f"{self.root}-{self.expt}"
-		return root_name, pickle_name
+		return f"{self.root}-{self.expt}"
 
 	def show(self, idx: int):
 		fig, axes = create_figure(
-			1, 2, (9, 2.7),
+			1, 2, (8.0, 2.5),
 			width_ratios=[3, 1],
 			constrained_layout=True,
 		)
@@ -331,12 +330,14 @@ class ReadoutGLM(object):
 			xticks=range(0, self.n_lags + 1),
 			xticklabels=xticklabels,
 		)
-		axes[0].tick_params(axis='x', rotation=-90, labelsize=9)
+		axes[0].tick_params(axis='x', rotation=0, labelsize=9)
+		axes[0].tick_params(axis='y', labelsize=9)
 		axes[0].legend(fontsize=11)
 		axes[0].grid()
 
 		sns.heatmap(
 			data=self.spatial[idx] * 1000,
+			annot_kws={'fontsize': 10},
 			cmap='rocket',
 			square=True,
 			cbar=False,
@@ -414,6 +415,63 @@ class ReadoutGLM(object):
 				self.spatial[idx].ravel()), self.spatial.shape[1:]))))
 			self.sorted_pix[idx] = top[::-1][:self.n_top_pix]
 		return
+
+
+def summarize_readout_fits(
+		fit_name: str,
+		device: str = 'cpu',
+		glm: bool = False, ):
+
+	path = _setup_path(fit_name, glm)
+	args = pjoin(path, 'args.json')
+	with open(args, 'r') as f:
+		args = json.load(f)
+	tr = pjoin(path, 'Trainer')
+	tr, _ = load_model_lite(
+		tr, device, strict=False)
+
+	df = []
+	for f in sorted(os.listdir(path)):
+		if not f.endswith('.pkl'):
+			continue
+		root = f.split('.')[0]
+		root, expt = root.split('-')
+		kws = dict(tr=tr, root=root, expt=expt)
+		ro = Readout(**kws).load(fit_name, 'cpu')
+		if ro.max_perf is not None:
+			perf = {
+				i: r / ro.max_perf[i] for
+				i, r in ro.perf.items()
+			}
+		else:
+			perf = ro.perf
+		log_alpha = {
+			i: np.log10(m.alpha) for
+			i, m in ro.mod.items()
+		}
+		# pixel stuff
+		pix_ranks, pix_counts = {}, {}
+		for i, best in ro.best_pix.items():
+			pix_ranks[i] = np.where(np.all(
+				ro.sorted_pix[i] == best,
+				axis=1
+			))[0][0]
+			pix_counts[i] = collections.Counter([
+				tuple(e) for e in
+				ro.best_pix_all[i]
+			]).get(best, 0)
+		df.append({
+			'root': [root] * len(perf),
+			'expt': [expt] * len(perf),
+			'cell': perf.keys(),
+			'perf': perf.values(),
+			'log_alpha': log_alpha.values(),
+			'pix_ranks': pix_ranks.values(),
+			'pix_counts': pix_counts.values(),
+			'lags': ro.best_lags[list(perf.keys())],
+		})
+	df = pd.DataFrame(merge_dicts(df))
+	return df, args, tr
 
 
 def push(
@@ -509,12 +567,27 @@ def setup_data(
 	return data
 
 
+def _setup_path(fit_name: str, glm: bool = False):
+	path = 'Documents/MTMST/results'
+	path = pjoin(
+		pjoin(os.environ['HOME'], path),
+		'GLM' if glm else 'Ridge',
+		fit_name,
+	)
+	return path
+
+
 def _setup_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser()
 
 	parser.add_argument(
-		"name",
-		help='fit name',
+		"model_name",
+		help='which VAE to load',
+		type=str,
+	)
+	parser.add_argument(
+		"fit_name",
+		help='which VAE fit to load',
 		type=str,
 	)
 	parser.add_argument(
@@ -523,22 +596,22 @@ def _setup_args() -> argparse.Namespace:
 		type=str,
 	)
 	parser.add_argument(
-		"--model_name",
-		help='which VAE to load',
-		default=None,
-		type=str,
-	)
-	parser.add_argument(
-		"--fit_name",
-		help='which VAE fit to load',
-		default=None,
-		type=str,
-	)
-	parser.add_argument(
 		"--checkpoint",
 		help='checkpoint',
 		default=-1,
 		type=int,
+	)
+	parser.add_argument(
+		"--reservoir",
+		help='revert back to untrained?',
+		action='store_true',
+		default=False,
+	)
+	parser.add_argument(
+		"--comment",
+		help='added to fit name',
+		default=None,
+		type=str,
 	)
 	# Readout related
 	parser.add_argument(
@@ -550,13 +623,13 @@ def _setup_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--n_lags",
 		help='# time lags',
-		default=20,
+		default=6,
 		type=int,
 	)
 	parser.add_argument(
 		"--n_top_pix",
 		help='# top pixels to loop over',
-		default=8,
+		default=9,
 		type=int,
 	)
 	parser.add_argument(
@@ -572,16 +645,23 @@ def _setup_args() -> argparse.Namespace:
 		type=float,
 	)
 	parser.add_argument(
-		"--normalize",
-		help='normalize before PCA?',
-		default=True,
-		type=bool,
+		'--log_alphas',
+		help='List of log alpha values',
+		default=None,
+		type=float,
+		nargs='+',
 	)
 	parser.add_argument(
 		"--which",
 		help="which to use: {'enc', 'dec'}",
 		default='enc',
 		type=str,
+	)
+	parser.add_argument(
+		"--normalize",
+		help='normalize before PCA?',
+		default=True,
+		type=bool,
 	)
 	parser.add_argument(
 		"--use_ema",
@@ -593,91 +673,6 @@ def _setup_args() -> argparse.Namespace:
 		"--glm",
 		help='GLM or Ridge?',
 		default=False,
-		type=bool,
-	)
-	# VAE related
-	parser.add_argument(
-		"--n_ch",
-		help='# channels',
-		default=32,
-		type=int,
-	)
-	parser.add_argument(
-		"--n_enc_cells",
-		help='# enc cells',
-		default=2,
-		type=int,
-	)
-	parser.add_argument(
-		"--n_enc_nodes",
-		help='# enc nodes',
-		default=2,
-		type=int,
-	)
-	parser.add_argument(
-		"--n_dec_cells",
-		help='# dec cells',
-		default=2,
-		type=int,
-	)
-	parser.add_argument(
-		"--n_dec_nodes",
-		help='# dec nodes',
-		default=1,
-		type=int,
-	)
-	parser.add_argument(
-		"--n_pre_cells",
-		help='# preprocessing cells',
-		default=3,
-		type=int,
-	)
-	parser.add_argument(
-		"--n_pre_blocks",
-		help='# preprocessing blocks',
-		default=1,
-		type=int,
-	)
-	parser.add_argument(
-		"--n_post_cells",
-		help='# postprocessing cells',
-		default=3,
-		type=int,
-	)
-	parser.add_argument(
-		"--n_post_blocks",
-		help='# postprocessing blocks',
-		default=1,
-		type=int,
-	)
-	parser.add_argument(
-		"--n_latent_scales",
-		help='# latent scales',
-		default=3,
-		type=int,
-	)
-	parser.add_argument(
-		"--n_latent_per_group",
-		help='# latents per group',
-		default=13,
-		type=int,
-	)
-	parser.add_argument(
-		"--n_groups_per_scale",
-		help='# groups per scale',
-		default=12,
-		type=int,
-	)
-	parser.add_argument(
-		"--ada_groups",
-		help='adaptive latent groups',
-		default=True,
-		type=bool,
-	)
-	parser.add_argument(
-		"--compress",
-		help='compress latent space',
-		default=True,
 		type=bool,
 	)
 	# etc.
@@ -698,23 +693,54 @@ def _setup_args() -> argparse.Namespace:
 
 def _main():
 	args = _setup_args()
+	# setup alphas
+	if args.log_alphas is None:
+		log_a = np.logspace(-10, 10, 21)
+		args.log_alphas = sorted(log_a)
 	print(args)
 
-	# TODO: if model name is None, then create a Reservoir
-	#  else: replace the default VAE config in args using the loaded VAE
+	# load trainer
 	tr, metadata = load_model(
-		model_name='fixate1_k-32_z-13x[3,6,12]_enc(1x3)-dec(1x2)-pre(1x3)-post(1x3)',
-		fit_name='ep200-b500-lr(0.002)_beta(0.1:0x0.3)_lamb(0.001)_gr(400.0)_(2023_04_18,16:48)',
+		model_name=args.model_name,
+		fit_name=args.fit_name,
 		device=args.device,
-		checkpoint=70,
+		checkpoint=args.checkpoint,
+		strict=False,  # TODO: later remove this
 	)
+	# reservoir?
+	if args.reservoir:
+		name = 'reservoir'
+		tr.model = VAE(tr.model.cfg).to(tr.device)
+		tr.model_ema = VAE(tr.model.cfg).to(tr.device)
+		args.checkpoint = 0
+	else:
+		name = tr.model.cfg.sim
+		args.checkpoint = metadata['checkpoint']
+	# create save path
+	if args.comment is not None:
+		name = f"{args.comment}_{name}"
 	nf = sum(tr.model.ftr_sizes()[0].values())
 	fit_name = '_'.join([
-		args.name,
+		name,
 		f"nf-{nf}",
 		f"({now(True)})",
 	])
-	print(f"\nname: {fit_name}")
+	path = pjoin(
+		tr.model.cfg.results_dir,
+		'GLM' if args.glm else 'Ridge',
+		fit_name,
+	)
+	# save args
+	if not args.dry_run:
+		os.makedirs(path, exist_ok=True)
+		save_obj(
+			obj=vars(args),
+			file_name='args',
+			save_dir=path,
+			mode='json',
+			verbose=args.verbose,
+		)
+	print(f"\nname: {fit_name}\n")
 
 	kws = dict(
 		tr=tr,
@@ -730,18 +756,25 @@ def _main():
 		radius=args.radius,
 		use_ema=args.use_ema,
 	)
-	for expt, useful in tr.model.cfg.useful_yuwei.items():
-		ro = ReadoutGLM(expt=expt, **kws).fit_readout()
-		for idx in useful:
-			perf_r, _ = ro.fit_neuron(idx, args.glm, full=True)
-		ro.save(fit_name)
-	# if args.verbose:
-	# ro.show(0)
-	# sns.heatmap(perf_r, square=True, annot=True)
-	# plt.show()
-	# TODO: save args as JSON file in the directory .../Ridge/name_date/
+	alphas = [
+		10 ** a for a in
+		args.log_alphas
+	]
 
-	print(f"\n[PROGRESS] fitting ReadoutGLM done {now(True)}.\n")
+	if not args.dry_run:
+		pbar = tqdm(
+			tr.model.cfg.useful_yuwei.items(),
+			dynamic_ncols=True,
+			leave=True,
+			position=0,
+		)
+		for expt, useful in pbar:
+			ro = Readout(expt=expt, **kws).fit_readout(path)
+			for idx in useful:
+				perf_r, _ = ro.fit_neuron(idx, args.glm, alphas)
+			ro.save(path)
+
+	print(f"\n[PROGRESS] fitting Readout done {now(True)}.\n")
 	return
 
 

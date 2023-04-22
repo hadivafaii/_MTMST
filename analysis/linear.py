@@ -8,10 +8,11 @@ def mi_analysis(
 		g: np.ndarray,
 		n_bins: int = 20,
 		parallel: bool = True,
+		backend: str = 'loky',
 		n_jobs: int = -1,):
 	# mi regression
 	if parallel:
-		with joblib.parallel_backend('multiprocessing'):
+		with joblib.parallel_backend(backend):
 			mi = joblib.Parallel(n_jobs=n_jobs)(
 				joblib.delayed(mutual_info_regression)
 				(g, z[:, i]) for i in range(z.shape[-1])
@@ -125,6 +126,7 @@ class LinearModel(Obj):
 		if 'random_state' in self.defaults:
 			self.defaults['random_state'] = seed
 		self.category = category
+		self.kwargs = None
 		self.x = x
 		self.y = y
 		self.x_tst = x_tst
@@ -148,48 +150,75 @@ class LinearModel(Obj):
 			msg += f"default params:\n{self.defaults}"
 			print(msg)
 
-	def fit_linear(self, xv_folds: bool = True, **kwargs):
-		kwargs = setup_kwargs(self.defaults, kwargs)
-		if xv_folds:
-			self.fit_xv(**kwargs)
-		for a in self.alphas:
-			kwargs['alpha'] = a
-			model = self.fn(**filter_kwargs(self.fn, kwargs))
-			model.fit(flatten_stim(self.x), self.y)
-			kernel = model.coef_.reshape(self.x.shape[1:])
-			try:
-				self.kers[a] = VelField(kernel)
-			except AssertionError:
-				self.kers[a] = kernel
-			self.models[a] = model
-			if self.x_tst is not None:
-				pred = model.predict(flatten_stim(self.x_tst))
-				r2 = sk_metric.r2_score(self.y_tst, pred) * 100
-				r = sp_stats.pearsonr(self.y_tst, pred)[0]
-				self.df.loc[a, 'r2_tst'] = r2
-				self.df.loc[a, 'r_tst'] = r
-				self.preds[a] = pred
+	def best_alpha(self):
+		assert self.kwargs is not None
+		if self.x_tst is not None:
+			best_a, perf = max(
+				self.df['r_tst'].items(),
+				key=lambda t: t[1],
+			)
+		else:
+			if self.category == 'Ridge':
+				best_a, perf = max(
+					self.df['r'].items(),
+					key=lambda t: t[1],
+				)
+			elif self.category == 'PoissonRegressor':
+				best_a, perf = max(
+					self.df['nnll'].items(),
+					key=lambda t: t[1],
+				)
+			else:
+				raise NotImplementedError(self.category)
+		if best_a not in self.models:
+			_ = self._fit(best_a)
+		return best_a, perf
+
+	def fit_linear(self, **kwargs):
+		self.kwargs = setup_kwargs(self.defaults, kwargs)
+		self.kwargs = filter_kwargs(self.fn, self.kwargs)
+		if self.x_tst is not None:
+			self._fit_tst()
+		else:
+			self._fit_xv()
 		return self
 
-	def fit_xv(self, **kwargs):
+	def _fit(self, a: float):
+		self.kwargs['alpha'] = a
+		model = self.fn(**self.kwargs)
+		model.fit(flatten_stim(self.x), self.y)
+		kernel = model.coef_.reshape(self.x.shape[1:])
+		try:
+			self.kers[a] = VelField(kernel)
+		except AssertionError:
+			self.kers[a] = kernel
+		self.models[a] = model
+		return model
+
+	def _fit_tst(self):
 		for a in self.alphas:
-			kwargs['alpha'] = a
-			nnll, r = self._fit_folds(**kwargs)
+			model = self._fit(a)
+			pred = model.predict(flatten_stim(self.x_tst))
+			r2 = sk_metric.r2_score(self.y_tst, pred) * 100
+			r = sp_stats.pearsonr(self.y_tst, pred)[0]
+			self.df.loc[a, 'r2_tst'] = r2
+			self.df.loc[a, 'r_tst'] = r
+			self.preds[a] = pred
+		return
+
+	def _fit_xv(self):
+		for a in self.alphas:
+			nnll, r = [], []
+			self.kwargs['alpha'] = a
+			for f, (trn, vld) in enumerate(self.kf.split(self.x)):
+				model = self.fn(**self.kwargs)
+				model.fit(flatten_stim(self.x[trn]), self.y[trn])
+				pred = model.predict(flatten_stim(self.x[vld]))
+				nnll.append(null_adj_ll(self.y[vld], np.maximum(0, pred)))
+				r.append(sp_stats.pearsonr(self.y[vld], pred)[0])
 			self.df.loc[a, 'nnll'] = np.nanmean(nnll)
 			self.df.loc[a, 'r'] = np.nanmean(r)
-		return self
-
-	def _fit_folds(self, full: bool = True, **kwargs):
-		nnll, r = [], []
-		for fold, (trn, vld) in enumerate(self.kf.split(self.x)):
-			if not full and fold > 0:
-				continue
-			model = self.fn(**filter_kwargs(self.fn, kwargs))
-			model.fit(flatten_stim(self.x[trn]), self.y[trn])
-			pred = model.predict(flatten_stim(self.x[vld]))
-			nnll.append(null_adj_ll(self.y[vld], np.maximum(0, pred)))
-			r.append(sp_stats.pearsonr(self.y[vld], pred)[0])
-		return nnll, r
+		return
 
 	def _init_df(self):
 		fill_vals = [np.nan] * len(self.alphas)
@@ -206,7 +235,7 @@ class LinearModel(Obj):
 		self.df = pd.DataFrame(df).set_index('alpha')
 		return
 
-	def show_pred(self, figsize=(9.0, 4.7)):
+	def show_pred(self, figsize=(7.0, 3.0)):
 		if not self.preds:
 			return
 		fig, ax = create_figure(1, 1, figsize)
@@ -216,10 +245,10 @@ class LinearModel(Obj):
 			lbl = r"$R^2 = $" + f"{r2:0.1f}%  ("
 			lbl += r"$\alpha = $" + f"{a:0.2g})"
 			ax.plot(pred, color=f'C{i}', label=lbl)
-		ax.legend(fontsize=12)
+		ax.legend(fontsize=8)
 		leg = ax.get_legend()
 		if leg is not None:
-			leg.set_bbox_to_anchor((1.0, 1.025))
+			leg.set_bbox_to_anchor((1.0, 1.03))
 		ax.grid()
 		plt.show()
 		return fig, ax
@@ -244,9 +273,10 @@ def compute_sta(
 	for t in tqdm(inds, disable=not verbose):
 		# zero n_lags allowed:
 		x = stim[t - n_lags: t + 1]
-		x = np.expand_dims(x, 0)
-		y = spks[t].reshape(shape)
-		sta += x * y
+		for i in range(nc):
+			y = spks[t, i]
+			if y > 0:
+				sta[i] += x * y
 	n = spks[inds].sum(0)
 	n = n.reshape(shape)
 	sta /= n

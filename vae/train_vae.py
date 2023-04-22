@@ -1,6 +1,6 @@
 from .vae2d import VAE
-from base.dataset import ROFL
 from base.train_base import *
+from base.dataset import ROFLDS
 from analysis.linear import regress, mi_analysis
 from figures.fighelper import plot_heatmap, show_opticflow, plot_bar
 
@@ -52,8 +52,8 @@ class TrainerVAE(BaseTrainer):
 			self.wd_coeffs = beta_anneal_linear(
 				n_iters=self.n_iters,
 				beta=self.cfg.lambda_norm,
-				anneal_portion=2*self.cfg.kl_anneal_portion,
-				constant_portion=1000*self.cfg.kl_const_portion,
+				anneal_portion=self.cfg.kl_anneal_portion,
+				constant_portion=1e3*self.cfg.kl_const_portion,
 				min_beta=self.cfg.lambda_init,
 			)
 		else:
@@ -109,13 +109,17 @@ class TrainerVAE(BaseTrainer):
 			self.scaler.unscale_(self.optim)
 			# clip grad
 			if self.cfg.grad_clip is not None:
+				if gstep < kwargs['n_iters_warmup']:
+					max_norm = self.cfg.grad_clip * 2
+				else:
+					max_norm = self.cfg.grad_clip
 				grad_norm = nn.utils.clip_grad_norm_(
 					parameters=self.model.parameters(),
-					max_norm=self.cfg.grad_clip,
+					max_norm=max_norm,
 				).item()
 				grads.update(grad_norm)
+				self.stats['grad'][gstep] = grad_norm
 				if grad_norm > self.cfg.grad_clip:
-					self.stats['grad'][gstep] = grad_norm
 					self.stats['loss'][gstep] = loss.item()
 			# update average meters & stats
 			nelbo.update(loss.item())
@@ -382,7 +386,7 @@ class TrainerVAE(BaseTrainer):
 			xticklabels=_tx,
 			yticklabels=_ty,
 			annot_kws={'fontsize': 12},
-			figsize=(10, 8),
+			figsize=(8, 6.5),
 			display=False,
 		)
 		figs['fig/regression'] = fig
@@ -403,10 +407,12 @@ class TrainerVAE(BaseTrainer):
 		figs['fig/bar_aux'] = fig
 
 		# mutual info
+		n_jobs = max(1, joblib.effective_n_jobs())
+		n_jobs /= max(1, torch.cuda.device_count())
 		mi = mi_analysis(
 			z=regr['z_vld'],
 			g=self.dl_vld.dataset.g,
-			n_jobs=20,
+			n_jobs=int(n_jobs),
 		)
 		mi = {
 			f"regr/{k}": v for
@@ -429,7 +435,7 @@ class TrainerVAE(BaseTrainer):
 			vmax=0.65,
 			cmap='rocket',
 			linecolor='dimgrey',
-			figsize=(22, 6),
+			figsize=(30, 8),
 			cbar=False,
 			annot=False,
 			display=False,
@@ -440,9 +446,9 @@ class TrainerVAE(BaseTrainer):
 	def setup_data(self, gpu: bool = True):
 		# create datasets
 		device = self.device if gpu else None
-		ds_trn = ROFL(self.model.cfg.sim_path, 'trn', device)
-		ds_vld = ROFL(self.model.cfg.sim_path, 'vld', device)
-		ds_tst = ROFL(self.model.cfg.sim_path, 'tst', device)
+		ds_trn = ROFLDS(self.model.cfg.sim_path, 'trn', device)
+		ds_vld = ROFLDS(self.model.cfg.sim_path, 'vld', device)
+		ds_tst = ROFLDS(self.model.cfg.sim_path, 'tst', device)
 		# cleate dataloaders
 		kws = dict(
 			batch_size=self.cfg.batch_size,
@@ -485,26 +491,26 @@ def _setup_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--n_enc_cells",
 		help='# enc cells',
-		default=2,
+		default=1,
 		type=int,
 	)
 	parser.add_argument(
 		"--n_enc_nodes",
 		help='# enc nodes',
-		default=2,
+		default=3,
 		type=int,
 	)
 	# dec
 	parser.add_argument(
 		"--n_dec_cells",
 		help='# dec cells',
-		default=2,
+		default=1,
 		type=int,
 	)
 	parser.add_argument(
 		"--n_dec_nodes",
 		help='# dec nodes',
-		default=1,
+		default=2,
 		type=int,
 	)
 	# pre
@@ -543,7 +549,7 @@ def _setup_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--n_latent_per_group",
 		help='# latents per group',
-		default=13,
+		default=20,
 		type=int,
 	)
 	parser.add_argument(
@@ -553,6 +559,12 @@ def _setup_args() -> argparse.Namespace:
 		type=int,
 	)
 	parser.add_argument(
+		"--activation_fn",
+		help='activation function',
+		default='swish',
+		type=str,
+	)
+	parser.add_argument(
 		"--spectral_norm",
 		help='spectral norm (0 = disable)',
 		default=0,
@@ -560,23 +572,29 @@ def _setup_args() -> argparse.Namespace:
 	)
 	parser.add_argument(
 		"--ada_groups",
-		help='adaptive latent groups',
+		help='adaptive latent groups?',
 		default=True,
 		type=bool,
 	)
 	parser.add_argument(
 		"--compress",
-		help='compress latent space',
+		help='compress latent space?',
+		default=True,
+		type=bool,
+	)
+	parser.add_argument(
+		"--use_bn",
+		help='use batch norm?',
+		default=False,
+		type=bool,
+	)
+	parser.add_argument(
+		"--use_se",
+		help='use squeeze & excite?',
 		default=True,
 		type=bool,
 	)
 	# training
-	parser.add_argument(
-		"--kl_beta",
-		help='kl loss beta coefficient',
-		default=0.1,
-		type=float,
-	)
 	parser.add_argument(
 		"--lr",
 		help='learning rate',
@@ -586,25 +604,25 @@ def _setup_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--epochs",
 		help='# epochs',
-		default=200,
+		default=160,
 		type=int,
 	)
 	parser.add_argument(
 		"--batch_size",
 		help='batch size',
-		default=500,
+		default=600,
 		type=int,
 	)
 	parser.add_argument(
 		"--warm_restart",
 		help='# warm restarts',
-		default=1,
+		default=0,
 		type=int,
 	)
 	parser.add_argument(
 		"--warmup_portion",
 		help='warmup portion',
-		default=0.025,
+		default=1.25e-2,
 		type=float,
 	)
 	parser.add_argument(
@@ -614,16 +632,52 @@ def _setup_args() -> argparse.Namespace:
 		type=str,
 	)
 	parser.add_argument(
+		"--kl_beta",
+		help='kl loss beta coefficient',
+		default=0.15,
+		type=float,
+	)
+	parser.add_argument(
+		"--kl_anneal_portion",
+		help='kl beta anneal portion',
+		default=0.5,
+		type=float,
+	)
+	parser.add_argument(
+		"--kl_const_portion",
+		help='kl const portion',
+		default=1e-4,
+		type=float,
+	)
+	parser.add_argument(
+		"--kl_anneal_cycles",
+		help='0: linear, >0: cosine',
+		default=0,
+		type=int,
+	)
+	parser.add_argument(
+		"--lambda_anneal",
+		help='anneal weight reg coeff?',
+		default=False,
+		type=bool,
+	)
+	parser.add_argument(
 		"--lambda_norm",
 		help='weight regularization strength',
-		default=1e-3,
+		default=1e-4,
 		type=float,
 	)
 	parser.add_argument(
 		"--grad_clip",
 		help='gradient norm clipping',
-		default=400.0,
+		default=250.0,
 		type=float,
+	)
+	parser.add_argument(
+		"--seed",
+		help='random seed',
+		default=0,
+		type=int,
 	)
 	parser.add_argument(
 		"--dry_run",
@@ -640,6 +694,7 @@ def _main():
 
 	vae = VAE(ConfigVAE(
 		sim=args.sim,
+		seed=args.seed,
 		n_ch=args.n_ch,
 		n_enc_cells=args.n_enc_cells,
 		n_enc_nodes=args.n_enc_nodes,
@@ -652,15 +707,17 @@ def _main():
 		n_latent_scales=args.n_latent_scales,
 		n_latent_per_group=args.n_latent_per_group,
 		n_groups_per_scale=args.n_groups_per_scale,
+		activation_fn=args.activation_fn,
 		spectral_norm=args.spectral_norm,
 		ada_groups=args.ada_groups,
 		compress=args.compress,
+		save=not args.dry_run,
+		use_bn=args.use_bn,
+		use_se=args.use_se,
 		balanced_recon=True,
 		residual_kl=True,
 		scale_init=False,
 		separable=False,
-		use_bn=False,
-		use_se=True,
 	))
 	tr = TrainerVAE(
 		model=vae,
@@ -675,14 +732,20 @@ def _main():
 			grad_clip=args.grad_clip,
 			# kl
 			kl_beta=args.kl_beta,
-			kl_anneal_cycles=0,
-			kl_anneal_portion=0.3,
-			kl_const_portion=1e-4,
+			kl_anneal_portion=args.kl_anneal_portion,
+			kl_const_portion=args.kl_const_portion,
+			kl_anneal_cycles=args.kl_anneal_cycles,
 			# weight reg
+			lambda_anneal=args.lambda_anneal,
 			lambda_norm=args.lambda_norm,
-			lambda_anneal=True,
 			lambda_init=1e-7),
 	)
+	msg = ', '.join([
+		f"# enc ftrs: {sum(vae.ftr_sizes()[0].values())}",
+		f"# conv layers: {len(vae.all_conv_layers)}",
+		f"# latents: {vae.cfg.total_latents()}",
+	])
+	print('\n', msg)
 	vae.print()
 	msg = '\n'.join([
 		f"VAE:\t\t{vae.cfg.name()}",
@@ -701,7 +764,7 @@ def _main():
 	if not args.dry_run:
 		tr.train(comment)
 
-	print(f"\n[PROGRESS] fitting VAE done ({now(True)}).\n")
+	print(f"\n[PROGRESS] fitting VAE on {args.device} done ({now(True)}).\n")
 	return
 
 

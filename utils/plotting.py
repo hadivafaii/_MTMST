@@ -282,10 +282,21 @@ def fonts_html():
 	return "<div style='column-count: 2;'>{}</div>".format(code)
 
 
-def set_style(style: str = 'ticks'):
-	sns.set_style(style)
-	matplotlib.rcParams['image.interpolation'] = 'none'
+def set_style(
+		context: str = 'notebook',
+		style: str = 'ticks',
+		palette: str = None,
+		font: str = 'sans-serif', ):
+	sns.set_theme(
+		context=context,
+		style=style,
+		palette=palette,
+		font=font,
+	)
 	matplotlib.rcParams['grid.linestyle'] = ':'
+	matplotlib.rcParams['figure.figsize'] = (5.0, 3.2)
+	matplotlib.rcParams['image.interpolation'] = 'none'
+	matplotlib.rcParams['font.family'] = font
 	return
 
 
@@ -309,9 +320,9 @@ def create_figure(
 	:param ncols:
 	:param figsize:
 	:param layout: {'constrained', 'compressed', 'tight', None}
-	:param sharex:
-	:param sharey:
-	:param style:
+	:param sharex: {'none', 'all', 'row', 'col'} or bool
+	:param sharey: {'none', 'all', 'row', 'col'} or bool
+	:param style: {'darkgrid', 'whitegrid', 'dark', 'white', 'ticks'}
 	:param wspace:
 	:param hspace:
 	:param width_ratios:
@@ -321,7 +332,7 @@ def create_figure(
 	:param kwargs:
 	:return: fig, axes
 	"""
-	set_style(style)
+	set_style(style=style)
 	figsize = figsize if figsize else plt.rcParams.get('figure.figsize')
 	dpi = dpi if dpi else plt.rcParams.get('figure.dpi')
 

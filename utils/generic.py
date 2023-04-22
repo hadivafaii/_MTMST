@@ -37,6 +37,10 @@ from tqdm import tqdm
 from typing import *
 
 
+def escape_parenthesis(s: str):
+	print(s.replace('(', '\(').replace(')', '\)'))
+
+
 def to_np(x: Union[torch.Tensor, np.ndarray]):
 	if isinstance(x, np.ndarray):
 		return x
@@ -131,18 +135,13 @@ def np_nans(shape: Union[int, Iterable[int]]):
 def make_logger(
 		name: str,
 		path: str,
-		module: str,
-		verbose: bool = True, ) -> logging.Logger:
+		level: int,
+		module: str = None, ) -> logging.Logger:
 	os.makedirs(path, exist_ok=True)
 	logger = logging.getLogger(module)
-	logger.setLevel(logging.INFO)
-	name = f"{name}_{now()}.log"
-	file = pjoin(path, name)
+	logger.setLevel(level)
+	file = pjoin(path, f"{name}.log")
 	file_handler = logging.FileHandler(file)
-	if verbose:
-		msg = f"logger '{name}' created at\n{path}"
-		print(msg)
-
 	formatter = logging.Formatter(
 		'%(asctime)s : %(levelname)s : %(name)s : %(message)s')
 	file_handler.setFormatter(formatter)
@@ -217,7 +216,7 @@ def save_obj(
 			raise RuntimeError(msg)
 		else:
 			file_name = f"{file_name}.{mode}"
-	assert mode in _allowed_modes,\
+	assert mode in _allowed_modes, \
 		f"available modes:\n{_allowed_modes}"
 
 	path = pjoin(save_dir, file_name)
@@ -240,9 +239,7 @@ def save_obj(
 			for line in obj:
 				f.write(line)
 		else:
-			msg = 'invalid mode, available options:'
-			msg += f"\n{_allowed_modes}"
-			raise RuntimeError(msg)
+			raise RuntimeError(mode)
 	if verbose:
 		print(f"[PROGRESS] '{file_name}' saved at\n{save_dir}")
 	return path

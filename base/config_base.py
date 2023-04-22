@@ -96,11 +96,11 @@ class BaseConfigTrain(object):
 		assert warmup_portion >= 0
 		self.warm_restart = warm_restart
 		self.warmup_portion = warmup_portion
-		assert optimizer in _OPTIM_CHOICES,\
+		assert optimizer in _OPTIM_CHOICES, \
 			f"allowed optimizers:\n{_OPTIM_CHOICES}"
 		self.optimizer = optimizer
 		self._set_optim_kws(optimizer_kws)
-		assert scheduler_type in _SCHEDULER_CHOICES,\
+		assert scheduler_type in _SCHEDULER_CHOICES, \
 			f"allowed schedulers:\n{_SCHEDULER_CHOICES}"
 		self.scheduler_type = scheduler_type
 		self._set_scheduler_kws(scheduler_kws)
@@ -128,7 +128,7 @@ class BaseConfigTrain(object):
 		return
 
 	def _set_scheduler_kws(self, kws):
-		lr_min = 1e-4
+		lr_min = 1e-5
 		period = self.epochs * (1 - self.warmup_portion)
 		period /= (2 * self.warm_restart + 1)
 		if self.scheduler_type == 'cosine':

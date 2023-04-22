@@ -1,4 +1,5 @@
 from base.common import *
+from readout.config_readout import ConfigReadout
 
 
 class _Readout(Module):

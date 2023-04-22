@@ -224,10 +224,13 @@ class VAE(Module):
 				ftr_dec[s.size(-1)].append(s)
 		for cell in self.post_process:
 			s = cell(s)
-		ftr = {
-			'enc': {k: torch.cat(v, dim=1) for k, v in ftr_enc.items()},
-			'dec': {k: torch.cat(v, dim=1) for k, v in ftr_dec.items()},
-		}
+		if full:
+			ftr = {
+				'enc': {k: torch.cat(v, dim=1) for k, v in ftr_enc.items()},
+				'dec': {k: torch.cat(v, dim=1) for k, v in ftr_dec.items()},
+			}
+		else:
+			ftr = None
 		return self.out(s), latents, q_all, p_all, ftr
 
 	def ftr_sizes(self):
@@ -305,8 +308,7 @@ class VAE(Module):
 		return kl_all, kl_diag
 
 	def loss_weight(self):
-		return self.l1_weight(
-			torch.cat(self.all_log_norm), self.w_tgt)
+		return torch.cat(self.all_lognorm).pow(2).mean()
 
 	def loss_spectral(self, device: torch.device = None, name: str = 'w'):
 		weights = collections.defaultdict(list)
@@ -403,7 +405,7 @@ class VAE(Module):
 		mult = self._init_post(mult)
 		self._init_output(mult)
 		self._init_norm()
-		self._init_loss()
+		# self._init_loss()
 		return
 
 	def _init_sizes(self):
@@ -516,9 +518,9 @@ class VAE(Module):
 			kernel_size=1,
 		)
 		self.enc0 = nn.Sequential(
-			nn.ELU(inplace=True),
+			get_act_fn(self.cfg.activation_fn, inplace=True),
 			Conv2D(**kws),
-			nn.ELU(inplace=True),
+			get_act_fn(self.cfg.activation_fn, inplace=True),
 		)
 		return mult
 
@@ -648,14 +650,13 @@ class VAE(Module):
 			'enc0', 'enc_tower', 'dec_tower',
 			'enc_sampler', 'dec_sampler',
 		]
-		self.all_log_norm = []
-		self.all_conv_layers = []
+		self.all_conv_layers, self.all_lognorm = [], []
 		for child_name, child in self.named_children():
 			for m in child.modules():
 				if isinstance(m, (Conv2D, DeConv2D)):
 					self.all_conv_layers.append(m)
 					if child_name in apply_norm and m.apply_norm:
-						self.all_log_norm.append(m.lognorm)
+						self.all_lognorm.append(m.lognorm)
 		self.sr_u, self.sr_v = {}, {}
 		if self.cfg.spectral_norm:
 			fn = AddNorm(
@@ -667,13 +668,14 @@ class VAE(Module):
 			self.apply(fn)
 		return
 
-	def _init_loss(self):
-		self.l1_weight = nn.SmoothL1Loss(
-			beta=0.1, reduction='mean')
-		w_tgt = torch.zeros_like(
-			torch.cat(self.all_log_norm))
-		self.register_buffer('w_tgt', w_tgt)
-		return
+	# def _init_loss(self):
+		# self.l1_weight = nn.SmoothL1Loss(
+		# 	beta=0.1, reduction='mean')
+		# self.l2_weight = nn.MSELoss()
+		# w_tgt = torch.zeros_like(
+		# 	torch.cat(self.all_lognorm))
+		# self.register_buffer('w_tgt', w_tgt)
+		# return
 
 
 class Sampler(nn.Module):

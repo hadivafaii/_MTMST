@@ -3,8 +3,6 @@ from torch.nn import functional as F
 from utils.plotting import *
 from vae.config_vae import (
 	ConfigVAE, ConfigTrainVAE)
-from readout.config_readout import (
-	ConfigReadout, ConfigTrainReadout)
 
 
 def beta_anneal_cosine(
@@ -135,7 +133,7 @@ def print_num_params(module: nn.Module):
 				t.add_row(['---', '---'])
 			else:
 				t.add_row([name, tot])
-	print(t, '\n\n')
+	print(t, '\n')
 	return
 
 
@@ -159,7 +157,7 @@ def load_model_lite(
 		if f.split('.')[-1] == 'pt'
 	)
 	state_dict = pjoin(path, fname_pt)
-	state_dict = torch.load(state_dict)
+	state_dict = torch.load(state_dict, device)
 	ema = state_dict['model_ema'] is not None
 
 	# create model + trainer
@@ -190,6 +188,8 @@ def load_model_lite(
 	if trainer.optim_schedule is not None:
 		trainer.optim_schedule.load_state_dict(
 			state_dict.get('scheduler', {}))
+	stats = state_dict['metadata'].pop('stats', {})
+	trainer.stats.update(stats)
 	metadata = {
 		**state_dict['metadata'],
 		'file': fname_pt,
@@ -243,7 +243,7 @@ def load_model(
 			checkpoint == _chkpt(f)
 		)
 	state_dict = pjoin(path, fname_pt)
-	state_dict = torch.load(state_dict)
+	state_dict = torch.load(state_dict, device)
 	ema = state_dict['model_ema'] is not None
 	model.load_state_dict(
 		state_dict=state_dict['model'],
@@ -280,6 +280,8 @@ def load_model(
 	if trainer.optim_schedule is not None:
 		trainer.optim_schedule.load_state_dict(
 			state_dict.get('scheduler', {}))
+	stats = state_dict['metadata'].pop('stats', {})
+	trainer.stats.update(stats)
 	metadata = {
 		**state_dict['metadata'],
 		'file': fname_pt,

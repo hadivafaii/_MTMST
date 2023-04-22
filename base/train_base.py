@@ -25,6 +25,7 @@ class BaseTrainer(object):
 		self.pbar = None
 
 		self.writer = None
+		self.logger = None
 		self.dl_trn = None
 		self.dl_vld = None
 		self.dl_tst = None
@@ -56,6 +57,7 @@ class BaseTrainer(object):
 		comment = comment if comment else self.cfg.name()
 		kwargs = dict(n_iters_warmup=int(np.round(
 			self.n_iters * self.cfg.warmup_portion)))
+		self.stats.clear()
 		if save:
 			self.model.create_chkpt_dir(comment)
 			self.cfg.save(self.model.chkpt_dir)
@@ -64,12 +66,22 @@ class BaseTrainer(object):
 				os.path.basename(self.model.chkpt_dir),
 			)
 			self.writer = SummaryWriter(writer)
+			self.logger = make_logger(
+				name=type(self).__name__,
+				path=self.model.chkpt_dir,
+				level=logging.DEBUG,
+			)
 		if self.cfg.scheduler_type == 'cosine':
 			self.optim_schedule.T_max *= len(self.dl_trn)
 		else:
 			raise NotImplementedError
 
-		self.pbar = tqdm(epochs)
+		self.pbar = tqdm(
+			epochs,
+			dynamic_ncols=True,
+			leave=True,
+			position=0,
+		)
 		for epoch in self.pbar:
 			avg_loss = self.iteration(epoch, **kwargs)
 			msg = ', '.join([

@@ -3,6 +3,39 @@ from analysis.helper import vel2polar
 from matplotlib.gridspec import GridSpec
 
 
+def show_readout_results(df: pd.DataFrame):
+	fig, axes = create_figure(2, 2, (9, 5), layout='constrained')
+	sns.histplot(data=df, x='perf', bins=np.linspace(0, 1, 41), label=r'$R$', ax=axes[0, 0])
+	x = np.mean(df['perf'])
+	axes[0, 0].axvline(x, color='r', ls='--', label=f"avg = {x:0.3f}")
+	axes[0, 0].locator_params(axis='x', nbins=10)
+	axes[0, 0].set(xlabel='')
+	axes[0, 0].set_xlim(0, 1)
+
+	a, b = min(df['log_alpha']), max(df['log_alpha'])
+	bins = np.linspace(a, b + 1, int(b - a) + 2) - 0.5
+	sns.histplot(data=df, x='log_alpha', bins=bins, label=r'$\log \alpha$', ax=axes[0, 1])
+	axes[0, 1].locator_params(axis='x', nbins=len(bins) + 2)
+	axes[0, 1].set(ylabel='', xlabel='')
+
+	a, b = min(df['lags']), max(df['lags'])
+	bins = np.linspace(a, b + 1, int(b - a) + 2) - 0.5
+	sns.histplot(data=df, x='lags', bins=bins, label='Lags', ax=axes[1, 0])
+	axes[1, 0].locator_params(axis='x', nbins=len(bins) + 2)
+	axes[1, 0].set(xlabel='')
+
+	a, b = min(df['pix_ranks']), max(df['pix_ranks'])
+	bins = np.linspace(a, b + 1, int(b - a) + 2) - 0.5
+	sns.histplot(data=df, x='pix_ranks', bins=bins, label="best pix norm rank", ax=axes[1, 1])
+	axes[1, 1].locator_params(axis='x', nbins=len(bins) + 2)
+	axes[1, 1].set(xlabel='', ylabel='')
+
+	for ax in axes.flat:
+		ax.legend()
+
+	plt.show()
+
+
 def plot_bar(df: pd.DataFrame, display: bool = True, **kwargs):
 	defaults = dict(
 		x='x',

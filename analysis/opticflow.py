@@ -1,6 +1,6 @@
 from .helper import *
 
-_CHOICES = ['obj', 'transl', 'terrain', 'fixate', 'pursuit']
+_CATEGORIES = ['obj', 'transl', 'terrain', 'fixate', 'pursuit']
 _Obj = collections.namedtuple(
 	typename='Object',
 	field_names=[
@@ -10,7 +10,7 @@ _Obj = collections.namedtuple(
 )
 
 
-class OpticFlow(object):
+class ROFL(object):
 	def __init__(
 			self,
 			category: str,
@@ -29,9 +29,9 @@ class OpticFlow(object):
 			seed: int = 0,
 			**kwargs,
 	):
-		super(OpticFlow, self).__init__()
-		assert category in _CHOICES,\
-			f"allowed categories:\n{_CHOICES}"
+		super(ROFL, self).__init__()
+		assert category in _CATEGORIES, \
+			f"allowed categories:\n{_CATEGORIES}"
 		assert isinstance(n, int) and n > 0
 		assert isinstance(n_obj, int) and n_obj >= 0
 		assert isinstance(dim, int) and dim % 2 == 1

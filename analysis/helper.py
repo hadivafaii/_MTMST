@@ -25,8 +25,8 @@ def max_r2(y: np.ndarray):
 	n_trials = y.shape[1]
 	response_power = np.nanvar(np.nanmean(y, 1), -1)
 	signal_power = (
-			n_trials * response_power -
-			np.nanmean(np.nanvar(y, -1), 1)
+		n_trials * response_power -
+		np.nanmean(np.nanvar(y, -1), 1)
 	) / (n_trials - 1)
 	return signal_power / response_power
 
