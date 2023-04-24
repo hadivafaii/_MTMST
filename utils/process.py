@@ -1,5 +1,6 @@
 from .generic import *
 import scipy.io as sio
+DESIGNSZ = 30
 
 
 def process_crcns(g: h5py.Group, path: str):
@@ -47,17 +48,28 @@ def process_crcns(g: h5py.Group, path: str):
 		eyeloc = processed['eyeloc'].astype(float)
 		hf_params = processed['hf_params'].astype(float)
 		hf_center = processed['hf_center'].astype(float)
-		group.create_dataset('spks', dtype=float, data=spks)
-		group.create_dataset('eyeloc', dtype=float, data=eyeloc)
-		group.create_dataset('hf_params', dtype=float, data=hf_params)
-		group.create_dataset('hf_center', dtype=float, data=hf_center)
+		hf_radius = processed['aperturediameter'] / 2
+		hf_radius = hf_radius * np.ones(len(hf_center))
+		# create dataset
+		data = [
+			('spks', float, spks),
+			('eyeloc', float, eyeloc),
+			('hf_params', float, hf_params),
+			('hf_center', float, hf_center),
+			('hf_radius', float, hf_radius),
+			('hf_radius_ratio', float, hf_radius / DESIGNSZ),
+		]
+		for a, b, c in data:
+			group.create_dataset(a, dtype=b, data=c)
+
 		# attrs
 		attrs = {
 			'expt_name': k[0],
 			'cellindex': cellindx,
 			'n_channels': spks.shape[1],
-			'dt': processed['dt'],
 			'rf_loc': processed['rf_loc'],
+			'dt': processed['dt'],
+			'designsize': DESIGNSZ,
 			'diameter': processed['aperturediameter'],
 			'has_repeats': False,
 		}
@@ -66,13 +78,12 @@ def process_crcns(g: h5py.Group, path: str):
 
 
 def process_mtmst(g: h5py.Group, path: str, tres: int):
-	mat_files = sorted(os.listdir(path))
 	mat_files = [
-		f for f in mat_files
+		f for f in os.listdir(path)
 		if f"tres{tres}" in f
 	]
 	expt_all = {}
-	for f in mat_files:
+	for f in sorted(mat_files):
 		mat_content = sio.loadmat(pjoin(path, f))
 		expt_name = mat_content['expt_name'].item()
 		group = g.create_group(expt_name)
@@ -86,12 +97,26 @@ def process_mtmst(g: h5py.Group, path: str, tres: int):
 			mat_content['centerx'],
 			mat_content['centery'],
 		], axis=-1).astype(float)
+		diameter = mat_content['diameter'][0].astype(float)
+		partition = mat_content['partition'][0].astype(int)
+		hf_radius = np.zeros(len(hf_center))
+		for i in range(len(partition) - 1):
+			intvl = range(partition[i], partition[i + 1])
+			hf_radius[intvl] = diameter[i] / 2
+		assert not any(hf_radius == 0)
+
 		# create datasets
-		group.create_dataset('lfp', dtype=float, data=lfp)
-		group.create_dataset('spks', dtype=float, data=spks)
-		group.create_dataset('badspks', dtype=bool, data=badspks)
-		group.create_dataset('hf_params', dtype=float, data=hf_params)
-		group.create_dataset('hf_center', dtype=float, data=hf_center)
+		data = [
+			('lfp', float, lfp),
+			('spks', float, spks),
+			('badspks', bool, badspks),
+			('hf_params', float, hf_params),
+			('hf_center', float, hf_center),
+			('hf_radius', float, hf_radius),
+			('hf_radius_ratio', float, hf_radius / DESIGNSZ),
+		]
+		for a, b, c in data:
+			group.create_dataset(a, dtype=b, data=c)
 
 		# attrs
 		attrs = {
@@ -99,13 +124,16 @@ def process_mtmst(g: h5py.Group, path: str, tres: int):
 			'cellindex': mat_content['cellindex'].item(),
 			'n_channels': spks.shape[1],
 			'dt': tres,
+			'designsize': DESIGNSZ,
 			'nx': mat_content['nx'].item(),
 			'ny': mat_content['ny'].item(),
 			'field': mat_content['field'],
 			'rf_loc': mat_content['rf_loc'],
 			'spatres': mat_content['spatres'],
 			'latency': mat_content['latency'].item(),
-			'partition': mat_content['partition'][0].astype(int),
+			'diameter': diameter,
+			'partition': partition,
+			'diameterR': mat_content['partitionR'][0].astype(int),
 			'partitionR': mat_content['partitionR'][0].astype(int),
 			'has_repeats': mat_content['repeats'].squeeze().astype(int).size > 0,
 		}
@@ -122,6 +150,13 @@ def process_mtmst(g: h5py.Group, path: str, tres: int):
 				mat_content['centerxR'],
 				mat_content['centeryR'],
 			], axis=-1).astype(float)
+			diameter_r = mat_content['diameterR'][0].astype(float)
+			partition_r = mat_content['partitionR'][0].astype(int)
+			hf_radius_r = np.zeros(len(hf_center_r))
+			for i in range(len(partition_r) - 1):
+				intvl = range(partition_r[i], partition_r[i + 1])
+				hf_radius_r[intvl] = diameter_r[i] / 2
+			assert not any(hf_radius_r == 0)
 			psth_raw_all = mat_content['psth_raw_all'].astype(int)
 			fix_lost_all = mat_content['fix_lost_all'].astype(bool)
 			tind_start_all = mat_content['tind_start_all'].astype(int)
@@ -130,14 +165,20 @@ def process_mtmst(g: h5py.Group, path: str, tres: int):
 				len(psth_raw_all) == len(tind_start_all) == len(fix_lost_all)
 
 			# create datasets
-			group.create_dataset('lfpR', dtype=float, data=lfp_r)
-			group.create_dataset('spksR', dtype=float, data=spks_r)
-			group.create_dataset('badspksR', dtype=bool, data=badspks_r)
-			group.create_dataset('hf_paramsR', dtype=float, data=hf_params_r)
-			group.create_dataset('hf_centerR', dtype=float, data=hf_center_r)
-			group.create_dataset('fix_lost_all', dtype=int, data=fix_lost_all)
-			group.create_dataset('psth_raw_all', dtype=float, data=psth_raw_all)
-			group.create_dataset('tind_start_all', dtype=int, data=tind_start_all)
+			data = [
+				('lfpR', float, lfp_r),
+				('spksR', float, spks_r),
+				('badspksR', bool, badspks_r),
+				('hf_paramsR', float, hf_params_r),
+				('hf_centerR', float, hf_center_r),
+				('hf_radiusR', float, hf_radius_r),
+				('hf_radius_ratioR', float, hf_radius_r / DESIGNSZ),
+				('fix_lost_all', int, fix_lost_all),
+				('psth_raw_all', float, psth_raw_all),
+				('tind_start_all', int, tind_start_all),
+			]
+			for a, b, c in data:
+				group.create_dataset(a, dtype=b, data=c)
 
 	return expt_all
 

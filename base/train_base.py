@@ -69,7 +69,7 @@ class BaseTrainer(object):
 			self.logger = make_logger(
 				name=type(self).__name__,
 				path=self.model.chkpt_dir,
-				level=logging.DEBUG,
+				level=logging.WARNING,
 			)
 		if self.cfg.scheduler_type == 'cosine':
 			self.optim_schedule.T_max *= len(self.dl_trn)
@@ -124,6 +124,9 @@ class BaseTrainer(object):
 			assert self.model_ema is not None
 			return self.model_ema.eval()
 		return self.model.eval()
+
+	def reset_model(self):
+		pass
 
 	def update_ema(self):
 		if self.model_ema is None:

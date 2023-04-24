@@ -24,11 +24,11 @@ class BaseConfig(object):
 			self.data_dir = pjoin(self.base_dir, 'data')
 			self.h_file = pjoin(self.data_dir, f"{h_file}.h5")
 			self.sim_path = pjoin(self.data_dir, sim_path)
-			self._mkdirs()
 			self._load_cellinfo()
 			self.seed = seed
 			self.set_seed()
 		if save:
+			self._mkdirs()
 			self.save()
 
 	def name(self):

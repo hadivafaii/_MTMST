@@ -134,6 +134,8 @@ class LinearModel(Obj):
 		if alphas is None:
 			alphas = [0.1, 1, 10, 100]
 		assert isinstance(alphas, Collection)
+		if category == 'LinearRegression':
+			alphas = [0]
 		self.alphas = alphas
 		self.kf = sk_modselect.KFold(
 			n_splits=n_folds,
@@ -158,7 +160,7 @@ class LinearModel(Obj):
 				key=lambda t: t[1],
 			)
 		else:
-			if self.category == 'Ridge':
+			if self.category in ['Ridge', 'LinearRegression']:
 				best_a, perf = max(
 					self.df['r'].items(),
 					key=lambda t: t[1],
@@ -184,7 +186,8 @@ class LinearModel(Obj):
 		return self
 
 	def _fit(self, a: float):
-		self.kwargs['alpha'] = a
+		if 'alpha' in self.kwargs:
+			self.kwargs['alpha'] = a
 		model = self.fn(**self.kwargs)
 		model.fit(flatten_stim(self.x), self.y)
 		kernel = model.coef_.reshape(self.x.shape[1:])
@@ -209,7 +212,8 @@ class LinearModel(Obj):
 	def _fit_xv(self):
 		for a in self.alphas:
 			nnll, r = [], []
-			self.kwargs['alpha'] = a
+			if 'alpha' in self.kwargs:
+				self.kwargs['alpha'] = a
 			for f, (trn, vld) in enumerate(self.kf.split(self.x)):
 				model = self.fn(**self.kwargs)
 				model.fit(flatten_stim(self.x[trn]), self.y[trn])
@@ -260,6 +264,7 @@ def compute_sta(
 		stim: np.ndarray,
 		spks: np.ndarray,
 		zscore: bool = True,
+		nanzero: bool = True,
 		verbose: bool = False, ):
 	assert n_lags >= 0
 	shape = stim.shape
@@ -280,4 +285,7 @@ def compute_sta(
 	n = spks[inds].sum(0)
 	n = n.reshape(shape)
 	sta /= n
+	if nanzero:
+		sta[np.isnan(sta)] = 0.0
+		warnings.warn("NaN in STA", RuntimeWarning)
 	return sta

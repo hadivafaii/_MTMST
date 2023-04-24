@@ -69,11 +69,21 @@ for ii=3:num_files
 
     spkst = design.spikest;
     spkstR = design.spikestR;
+    
+    % HF diameter info
+    diameter = [];
+    for i = 1:numel(design.taskparas)
+    	taskparas_contents = design.taskparas{i};
+    	diameter(end+1) = taskparas_contents.maskdiameter;
+    end
+    assert(length(diameter) == length(partition) - 1)
 
     % repeat info
+    diameterR = [];
+    tind_start_all = [];
+    fix_lost_all = [];
+    psth_raw_all = [];
     repeats = design.Repeats;
-
-    % test run
     if ~isempty(repeats)
         [tind_start, spkstot, FixLostAll, psth_raw] = ExtractRepeatData(design, 1);
         nb_good_repeats = size(psth_raw, 1);
@@ -90,10 +100,13 @@ for ii=3:num_files
             fix_lost_all(cc, :, :) = FixLost;
             psth_raw_all(cc, :, :) = psth_raw;
         end
-    else
-        tind_start_all = [];
-        fix_lost_all = [];
-        psth_raw_all = [];
+
+        % HF diameter info
+        for i = 1:numel(design.taskparasR)
+    	    taskparas_contents = design.taskparasR{i};
+    	    diameterR(end+1) = taskparas_contents.maskdiameter;
+        end
+        assert(length(diameterR) == length(partitionR) - 1)
     end
 
     % LFP
@@ -118,7 +131,10 @@ for ii=3:num_files
         'stim1', 'stim2', 'stimR', 'nx', 'ny', 'tres', 'spatres',...
         'spks', 'spkst', 'spksR', 'spkstR', 'lfp', 'lfpR',...
         'fixlost', 'fixlostR', 'badspks', 'badspksR',...
-        'opticflows', 'opticflowsR', 'centerx', 'centery', 'centerxR', 'centeryR',...
+        'opticflows', 'opticflowsR',...
+        'centerx', 'centery',...
+        'centerxR', 'centeryR',...
+        'diameter', 'diameterR',...
         'repeats', 'tind_start_all', 'fix_lost_all', 'psth_raw_all')
 
 end
@@ -190,10 +206,20 @@ for ii=3:num_files
     spkst = design.spikest;
     spkstR = design.spikestR;
 
-    % repeat info
-    repeats = design.Repeats;
+    % HF diameter info
+    diameter = [];
+    for i = 1:numel(design.taskparas)
+    	taskparas_contents = design.taskparas{i};
+    	diameter(end+1) = taskparas_contents.maskdiameter;
+    end
+    assert(length(diameter) == length(partition) - 1)
 
-    % test run
+    % repeat info
+    diameterR = [];
+    tind_start_all = [];
+    fix_lost_all = [];
+    psth_raw_all = [];
+    repeats = design.Repeats;
     if ~isempty(repeats)
         [tind_start, spkstot, FixLostAll, psth_raw] = ExtractRepeatData(design, 1);
         nb_good_repeats = size(psth_raw, 1);
@@ -210,10 +236,13 @@ for ii=3:num_files
             fix_lost_all(cc, :, :) = FixLost;
             psth_raw_all(cc, :, :) = psth_raw;
         end
-    else
-        tind_start_all = [];
-        fix_lost_all = [];
-        psth_raw_all = [];
+
+        % HF diameter info
+        for i = 1:numel(design.taskparasR)
+    	    taskparas_contents = design.taskparasR{i};
+    	    diameterR(end+1) = taskparas_contents.maskdiameter;
+        end
+        assert(length(diameterR) == length(partitionR) - 1)
     end
 
     % LFP
@@ -238,7 +267,10 @@ for ii=3:num_files
         'stim1', 'stim2', 'stimR', 'nx', 'ny', 'spatres',...
         'spks', 'spkst', 'spksR', 'spkstR', 'lfp', 'lfpR',...
         'fixlost', 'fixlostR', 'badspks', 'badspksR',...
-        'opticflows', 'opticflowsR', 'centerx', 'centery', 'centerxR', 'centeryR',...
+        'opticflows', 'opticflowsR',...
+        'centerx', 'centery',...
+        'centerxR', 'centeryR',...
+        'diameter', 'diameterR',...
         'repeats', 'tind_start_all', 'fix_lost_all', 'psth_raw_all')
 
 end

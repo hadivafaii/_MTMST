@@ -809,23 +809,22 @@ class HyperFlow(Obj):
 			self,
 			params: np.ndarray,
 			center: np.ndarray,
-			dim: Tuple[int, int],
-			radius: float,
+			r_ratio: np.ndarray,
+			apply_mask: bool = True,
+			dim: int = 17,
 			sres: float = 1,
 			tres: int = 25,
 			**kwargs,
 	):
 		super(HyperFlow, self).__init__(**kwargs)
-		assert len(params) == len(center)
+		assert len(params) == len(center) == len(r_ratio)
 		assert params.shape[1] == 6
 		assert center.shape[1] == 2
 		self.params = params
 		self.center = center
-		if not isinstance(dim, Iterable):
-			dim = (dim, dim)
-		assert len(dim) == 2
-		self.dim = dim
-		self.radius = radius
+		self.radius = r_ratio * dim
+		self.apply_mask = apply_mask
+		self.dim = (dim, dim)
 		self.sres = sres
 		self.tres = tres
 
@@ -919,7 +918,11 @@ class HyperFlow(Obj):
 		for t in range(len(self.params)):
 			xi = xi0 - self.center[t, 0]
 			yi = yi0 - self.center[t, 1]
-			mask = xi ** 2 + yi ** 2 <= self.radius ** 2
+			if self.apply_mask:
+				r = self.radius[t]
+				mask = xi ** 2 + yi ** 2 <= r ** 2
+			else:
+				mask = np.ones((xl, yl))
 			raw = np.zeros((xl, yl, 2, 6))
 
 			# translation

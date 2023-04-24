@@ -1,7 +1,7 @@
 global RootPath DataPath;
 
-% RootPath = '/home/hadi/Documents/MTMST/Yuwei/';
-RootPath = '/home/hadi/Documents/MTMST/Nardin/';
+% RootPath = '/home/hadi/Documents/MTMST-other/Yuwei/';
+RootPath = '/home/hadi/Documents/MTMST-other/Nardin/';
 addpath(genpath('MTproject_src'));
 addpath(genpath([RootPath 'MTproject_src/']));
 

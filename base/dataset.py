@@ -11,6 +11,10 @@ class ROFLDS(Dataset):
 			mode: str,
 			device: torch.device = None,
 	):
+		# category & n_obj
+		sim = path.split('/')[-1].split('_')[0]
+		self.category = sim[:-1]
+		self.n_obj = int(sim[-1])
 		# attributes
 		self.attrs = np.load(
 			pjoin(path, 'attrs.npy'),
@@ -38,12 +42,27 @@ class ROFLDS(Dataset):
 				device=device,
 				dtype=torch.float,
 			)
+		if self.category == 'obj':
+			self.transform = _shift_mu
+		else:
+			self.transform = None
 
 	def __len__(self):
 		return len(self.x)
 
+	# def __getitem__(self, i):
+		# return self.x[i], self.norm[i]
+
 	def __getitem__(self, i):
-		return self.x[i], self.norm[i]
+		if self.transform is not None:
+			x = self.transform(self.x[i])
+		else:
+			x = self.x[i]
+		return x, self.norm[i]
+
+
+def _shift_mu(x):
+	return x - torch.mean(x)
 
 
 def generate_simulation(
@@ -174,16 +193,10 @@ def save_simulation(
 	return
 
 
-def setup_repeat_data(
-		group: h5py.Group,
-		kws_hf: dict = None, ):
+def setup_repeat_data(group: h5py.Group, kws_hf: dict):
 	if not group.attrs.get('has_repeats'):
 		return None, None, None
-	kws_hf = kws_hf if kws_hf else {
-		'dim': 32,
-		'sres': 1,
-		'radius': 8,
-	}
+
 	psth = np.array(group['psth_raw_all'], dtype=float)
 	badspks = np.array(group['fix_lost_all'], dtype=bool)
 	tstart = np.array(group['tind_start_all'], dtype=int)
@@ -196,6 +209,7 @@ def setup_repeat_data(
 	hf = HyperFlow(
 		params=np.array(group['hf_paramsR']),
 		center=np.array(group['hf_centerR']),
+		r_ratio=np.array(group['hf_radius_ratioR']),
 		**kws_hf,
 	)
 	stim = hf.compute_hyperflow()
@@ -220,13 +234,11 @@ def load_ephys(
 		rescale: float = 2.0,
 		dtype: str = 'float32', ):
 	kws_hf = kws_hf if kws_hf else {
-		'dim': 17,
-		'sres': 1,
-		'radius': 8.0,
-	}
+		'dim': 17, 'sres': 1, 'apply_mask': True}
 	hf = HyperFlow(
 		params=np.array(group['hf_params']),
 		center=np.array(group['hf_center']),
+		r_ratio=np.array(group['hf_radius_ratio']),
 		**kws_hf,
 	)
 	stim = hf.compute_hyperflow(dtype=dtype)

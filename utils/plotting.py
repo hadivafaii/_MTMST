@@ -304,15 +304,15 @@ def create_figure(
 		nrows: int = 1,
 		ncols: int = 1,
 		figsize: Tuple[float, float] = None,
-		layout: str = None,
 		sharex: str = 'none',
 		sharey: str = 'none',
-		style: str = 'ticks',
+		layout: str = None,
 		wspace: float = None,
 		hspace: float = None,
 		width_ratios: List[float] = None,
 		height_ratios: List[float] = None,
 		reshape: bool = False,
+		style: str = 'ticks',
 		dpi: float = None,
 		**kwargs, ):
 	"""

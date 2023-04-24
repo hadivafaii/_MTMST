@@ -461,6 +461,11 @@ class TrainerVAE(BaseTrainer):
 		self.dl_tst = DataLoader(ds_tst, **kws)
 		return
 
+	def reset_model(self):
+		self.model = VAE(self.model.cfg).to(self.device)
+		self.model_ema = VAE(self.model.cfg).to(self.device)
+		return
+
 
 def _setup_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser()
