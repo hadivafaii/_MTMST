@@ -817,12 +817,16 @@ class HyperFlow(Obj):
 			**kwargs,
 	):
 		super(HyperFlow, self).__init__(**kwargs)
-		assert len(params) == len(center) == len(r_ratio)
 		assert params.shape[1] == 6
 		assert center.shape[1] == 2
 		self.params = params
 		self.center = center
+		if isinstance(r_ratio, float):
+			r_ratio = np.ones(len(params)) * r_ratio
 		self.radius = r_ratio * dim
+		assert len(self.params) == \
+			len(self.center) == \
+			len(self.radius)
 		self.apply_mask = apply_mask
 		self.dim = (dim, dim)
 		self.sres = sres

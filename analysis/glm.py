@@ -125,6 +125,7 @@ class Readout(object):
 				np.logspace(-4, 8, num=13),
 			)
 		if lags is None:
+			assert not self.use_latents
 			lags = [self.top_lags[idx]]
 		assert isinstance(lags, Collection)
 
@@ -428,6 +429,9 @@ class Readout(object):
 		return
 
 	def _sta(self, zscore: bool = False):
+		if self.use_latents:
+			self.sta = None
+			return
 		self.sta = compute_sta(
 			stim=self.ftr,
 			good=self.good,
@@ -441,8 +445,11 @@ class Readout(object):
 		return
 
 	def _top_lags(self):
-		axis = 2 if self.use_latents else (2, 3, 4)
-		self.temporal = np.mean(self.sta ** 2, axis=axis)
+		if self.use_latents:
+			self.temporal = None
+			self.top_lags = None
+			return
+		self.temporal = np.mean(self.sta ** 2, axis=(2, 3, 4))
 		self.top_lags = np.argmax(self.temporal[:, ::-1], axis=1)
 		if self.verbose:
 			print('[PROGRESS] best lag estimated')
@@ -519,11 +526,19 @@ def summarize_readout_fits(
 			else:
 				log_alpha[i] = -10  # For lr: alpha = 0
 		if ro.max_perf is not None:
-			perf = {
-				i: r / np.sqrt(ro.max_perf[i])
+			max_perf = {
+				i: np.sqrt(ro.max_perf[i])
 				for i, r in ro.perf.items()
 			}
+			perf = {
+				i: r / max_perf[i] for
+				i, r in ro.perf.items()
+			}
 		else:
+			max_perf = {
+				i: np.nan for
+				i in ro.perf
+			}
 			perf = ro.perf
 		# put all in df
 		df.append({
@@ -531,11 +546,11 @@ def summarize_readout_fits(
 			'expt': [expt] * len(perf),
 			'cell': perf.keys(),
 			'perf': perf.values(),
+			'max_perf': max_perf.values(),
 			'log_alpha': log_alpha.values(),
 			'best_lag': ro.best_lag.values(),
-			'top_lag': ro.top_lags[list(perf.keys())],
 		})
-		# pixel stuff
+		# pixel stuff, top lags etc.
 		if not ro.use_latents:
 			pix_ranks, pix_counts = {}, {}
 			for i, best in ro.best_pix.items():
@@ -550,6 +565,7 @@ def summarize_readout_fits(
 			df[-1].update({
 				'pix_rank': pix_ranks.values(),
 				'pix_count': pix_counts.values(),
+				'top_lag': ro.top_lags[list(perf.keys())],
 			})
 	df = pd.DataFrame(merge_dicts(df))
 	df_all = pd.concat(df_all).reset_index()
@@ -750,7 +766,7 @@ def _setup_args() -> argparse.Namespace:
 		"--apply_mask",
 		help='HyperFlow: apply mask or full field?',
 		default=True,
-		type=bool,
+		type=true,
 	)
 	parser.add_argument(
 		'--log_alphas',
@@ -787,19 +803,19 @@ def _setup_args() -> argparse.Namespace:
 		"--use_ema",
 		help='use ema or main model?',
 		default=False,
-		type=bool,
-	)
-	parser.add_argument(
-		"--glm",
-		help='GLM or Ridge?',
-		default=False,
-		type=bool,
+		type=true,
 	)
 	parser.add_argument(
 		"--zscore",
 		help='zscore stim before STA?',
 		default=True,
-		type=bool,
+		type=true,
+	)
+	parser.add_argument(
+		"--glm",
+		help='GLM or Ridge?',
+		action='store_true',
+		default=False,
 	)
 	parser.add_argument(
 		"--normalize",
@@ -811,8 +827,8 @@ def _setup_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--verbose",
 		help='verbose?',
+		action='store_true',
 		default=False,
-		type=bool,
 	)
 	parser.add_argument(
 		"--dry_run",
@@ -840,7 +856,6 @@ def _main():
 		fit_name=args.fit_name,
 		device=args.device,
 		checkpoint=args.checkpoint,
-		strict=False,  # TODO: later remove this
 	)
 	# reservoir?
 	if args.reservoir:

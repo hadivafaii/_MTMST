@@ -45,28 +45,15 @@ def show_readout_results(df: pd.DataFrame):
 	axes[1, 0].locator_params(axis='x', nbins=len(bins) + 2)
 	axes[1, 0].set(xlabel='')
 
-	if 'pix_rank' in df:
-		x = 'pix_rank'
-		a, b = min(df[x]), max(df[x])
+	x = 'max_perf'
+	a, b = np.nanmin(df[x]), np.nanmax(df[x])
+	if not (np.isnan(a) or np.isnan(b)):
 		bins = np.linspace(a, b + 1, int(b - a) + 2) - 0.5
 		sns.histplot(
 			x=x,
 			data=df,
 			bins=bins,
-			label="best pix norm rank",
-			ax=axes[1, 1],
-		)
-		axes[1, 1].locator_params(axis='x', nbins=len(bins) + 2)
-		axes[1, 1].set(xlabel='', ylabel='')
-	else:
-		x = 'top_lag'
-		a, b = min(df[x]), max(df[x])
-		bins = np.linspace(a, b + 1, int(b - a) + 2) - 0.5
-		sns.histplot(
-			x=x,
-			data=df,
-			bins=bins,
-			label="top lag (norm)",
+			label="max achievable R",
 			ax=axes[1, 1],
 		)
 		axes[1, 1].locator_params(axis='x', nbins=len(bins) + 2)

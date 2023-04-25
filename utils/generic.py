@@ -37,6 +37,10 @@ from tqdm import tqdm
 from typing import *
 
 
+def true(s: str):
+	return str(s).lower() == 'true'
+
+
 def escape_parenthesis(s: str):
 	print(s.replace('(', '\(').replace(')', '\)'))
 

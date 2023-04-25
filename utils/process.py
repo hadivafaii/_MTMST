@@ -133,10 +133,13 @@ def process_mtmst(g: h5py.Group, path: str, tres: int):
 			'latency': mat_content['latency'].item(),
 			'diameter': diameter,
 			'partition': partition,
-			'diameterR': mat_content['partitionR'][0].astype(int),
-			'partitionR': mat_content['partitionR'][0].astype(int),
 			'has_repeats': mat_content['repeats'].squeeze().astype(int).size > 0,
 		}
+		if attrs['has_repeats']:
+			attrs.update({
+				'diameterR': mat_content['diameterR'][0].astype(float),
+				'partitionR': mat_content['partitionR'][0].astype(int),
+			})
 		expt_all[expt_name] = attrs['n_channels']
 		group.attrs.update(attrs)
 

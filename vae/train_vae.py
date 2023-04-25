@@ -579,25 +579,25 @@ def _setup_args() -> argparse.Namespace:
 		"--ada_groups",
 		help='adaptive latent groups?',
 		default=True,
-		type=bool,
+		type=true,
 	)
 	parser.add_argument(
 		"--compress",
 		help='compress latent space?',
 		default=True,
-		type=bool,
+		type=true,
 	)
 	parser.add_argument(
 		"--use_bn",
 		help='use batch norm?',
 		default=False,
-		type=bool,
+		type=true,
 	)
 	parser.add_argument(
 		"--use_se",
 		help='use squeeze & excite?',
 		default=True,
-		type=bool,
+		type=true,
 	)
 	# training
 	parser.add_argument(
@@ -651,7 +651,7 @@ def _setup_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--kl_const_portion",
 		help='kl const portion',
-		default=1e-4,
+		default=1e-2,
 		type=float,
 	)
 	parser.add_argument(
@@ -664,7 +664,7 @@ def _setup_args() -> argparse.Namespace:
 		"--lambda_anneal",
 		help='anneal weight reg coeff?',
 		default=False,
-		type=bool,
+		type=true,
 	)
 	parser.add_argument(
 		"--lambda_norm",
