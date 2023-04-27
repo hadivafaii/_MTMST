@@ -18,7 +18,7 @@ _FIT = [
 ]
 
 
-class Readout(object):
+class Neuron(object):
 	def __init__(
 			self,
 			root: str,
@@ -33,7 +33,7 @@ class Readout(object):
 			verbose: bool = False,
 			**kwargs,
 	):
-		super(Readout, self).__init__()
+		super(Neuron, self).__init__()
 		self.tr = tr
 		self.root = root
 		self.expt = expt
@@ -317,7 +317,7 @@ class Readout(object):
 
 	def load(self, fit_name: str, device: str, glm: bool = False):
 		self.glm = glm
-		path = _setup_path(fit_name, glm)
+		path = results_dir(fit_name, glm)
 		# load pickle
 		file = f"{self.name()}.pkl"
 		file = pjoin(path, file)
@@ -489,11 +489,36 @@ class Readout(object):
 		return
 
 
-def summarize_readout_fits(
+def copy_fits(
+		fits: List[str],
+		destination: str,
+		overwrite: bool = False, ):
+	for fit_name in fits:
+		path = results_dir(fit_name)
+
+		# summary
+		f = f"summary_{fit_name}.df"
+		src = pjoin(path, f)
+		if os.path.isfile(src):
+			dst = pjoin(destination, f)
+			if not os.path.isfile(dst) or overwrite:
+				shutil.copyfile(src, dst)
+
+		# summary all
+		f = f"summary-all_{fit_name}.df"
+		src = pjoin(path, f)
+		if os.path.isfile(src):
+			dst = pjoin(destination, f)
+			if not os.path.isfile(dst) or overwrite:
+				shutil.copyfile(src, dst)
+	return
+
+
+def summarize_neural_fits(
 		fit_name: str,
 		device: str = 'cpu',
 		glm: bool = False, ):
-	path = _setup_path(fit_name, glm)
+	path = results_dir(fit_name, glm)
 	args = pjoin(path, 'args.json')
 	with open(args, 'r') as f:
 		args = json.load(f)
@@ -508,7 +533,7 @@ def summarize_readout_fits(
 		root = f.split('.')[0]
 		root, expt = root.split('-')
 		kws = dict(tr=tr, root=root, expt=expt)
-		ro = Readout(**kws).load(fit_name, 'cpu')
+		ro = Neuron(**kws).load(fit_name, 'cpu')
 		ro_all[f"{root}_{expt}"] = ro
 		for i, d in ro.df.items():
 			_df = d.reset_index()
@@ -569,16 +594,28 @@ def summarize_readout_fits(
 			})
 	df = pd.DataFrame(merge_dicts(df))
 	df_all = pd.concat(df_all).reset_index()
+
+	# add category & nf
+	info = fit_name.split('_')
+	i = info.index([
+		e for e in info
+		if 'nf-' in e
+	].pop())
+	category = info[i - 1]
+	nf = int(info[i].split('-')[1])
+	df.insert(0, 'category', category)
+	df.insert(1, 'nf', nf)
+
 	save_obj(
 		obj=df,
-		file_name='summary',
+		file_name=f"summary_{fit_name}",
 		save_dir=path,
 		verbose=False,
 		mode='df',
 	)
 	save_obj(
 		obj=df_all,
-		file_name='summary_all',
+		file_name=f"summary-all_{fit_name}",
 		save_dir=path,
 		verbose=False,
 		mode='df',
@@ -685,7 +722,7 @@ def setup_data(
 	return data
 
 
-def _setup_path(fit_name: str, glm: bool = False):
+def results_dir(fit_name: str, glm: bool = False):
 	path = 'Documents/MTMST/results'
 	path = pjoin(
 		pjoin(os.environ['HOME'], path),
@@ -844,19 +881,33 @@ def _main():
 	# setup alphas
 	if args.log_alphas is None:
 		log_a = itertools.chain(
-			range(-8, 3, 2),
-			range(3, 7),
+			range(-8, -3, 2),
+			range(-2, 7),
 			range(8, 17, 2),
 		)
 		args.log_alphas = sorted(log_a)
 
 	# load trainer
-	tr, metadata = load_model(
-		model_name=args.model_name,
-		fit_name=args.fit_name,
-		device=args.device,
-		checkpoint=args.checkpoint,
-	)
+	try:
+		path = 'Documents/MTMST/models'
+		tr, metadata = load_model(
+			model_name=args.model_name,
+			fit_name=args.fit_name,
+			checkpoint=args.checkpoint,
+			device=args.device,
+			path=path,
+		)
+	except FileNotFoundError:
+		path = 'Documents/MTMST/models_copied'
+		tr, metadata = load_model(
+			model_name=args.model_name,
+			fit_name=args.fit_name,
+			checkpoint=args.checkpoint,
+			device=args.device,
+			path=path,
+		)
+	args.load_path = path
+
 	# reservoir?
 	if args.reservoir:
 		tr.reset_model()
@@ -872,7 +923,16 @@ def _main():
 	# create save path
 	if args.comment is not None:
 		name = f"{args.comment}_{name}"
-	nf = sum(tr.model.ftr_sizes()[0].values())
+	if args.which == 'z':
+		nf = tr.model.cfg.total_latents()
+	elif args.which == 'enc':
+		nf = tr.model.ftr_sizes()[0]
+		nf = sum(nf.values())
+	elif args.which == 'dec':
+		nf = tr.model.ftr_sizes()[1]
+		nf = sum(nf.values())
+	else:
+		raise NotImplementedError
 	fit_name = '_'.join([
 		name,
 		f"nf-{nf}",
@@ -926,13 +986,13 @@ def _main():
 			position=0,
 		)
 		for expt, useful in pbar:
-			ro = Readout(expt=expt, **kws).fit_readout(
+			neuron = Neuron(expt=expt, **kws).fit_readout(
 				path=path, zscore=args.zscore)
 			for idx in useful:
-				_ = ro.fit_neuron(idx=idx, **kws_fit)
-			ro.save(path)
+				_ = neuron.fit_neuron(idx=idx, **kws_fit)
+			neuron.save(path)
 
-	print(f"\n[PROGRESS] fitting Readout on {args.device} done {now(True)}.\n")
+	print(f"\n[PROGRESS] fitting Neuron on {args.device} done {now(True)}.\n")
 	return
 
 

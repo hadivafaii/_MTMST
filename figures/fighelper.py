@@ -3,8 +3,8 @@ from analysis.helper import vel2polar
 from matplotlib.gridspec import GridSpec
 
 
-def show_readout_results(df: pd.DataFrame):
-	fig, axes = create_figure(2, 2, (9, 5), layout='constrained')
+def show_neural_results(df: pd.DataFrame):
+	fig, axes = create_figure(2, 2, (9.5, 5), layout='constrained')
 	sns.histplot(
 		data=df,
 		x='perf',
@@ -14,9 +14,8 @@ def show_readout_results(df: pd.DataFrame):
 	)
 	x = np.mean(df['perf'])
 	axes[0, 0].axvline(x, color='r', ls='--', label=f"avg = {x:0.3f}")
-	axes[0, 0].locator_params(axis='x', nbins=10)
+	axes[0, 0].locator_params(axis='x', nbins=12)
 	axes[0, 0].set(xlabel='')
-	axes[0, 0].set_xlim(0, 1)
 
 	x = 'log_alpha'
 	a, b = min(df[x]), max(df[x])
@@ -46,13 +45,11 @@ def show_readout_results(df: pd.DataFrame):
 	axes[1, 0].set(xlabel='')
 
 	x = 'max_perf'
-	a, b = np.nanmin(df[x]), np.nanmax(df[x])
-	if not (np.isnan(a) or np.isnan(b)):
-		bins = np.linspace(a, b + 1, int(b - a) + 2) - 0.5
+	if not all(np.isnan(df[x].values)):
 		sns.histplot(
 			x=x,
 			data=df,
-			bins=bins,
+			bins=np.linspace(0, 1, 41),
 			label="max achievable R",
 			ax=axes[1, 1],
 		)
@@ -63,6 +60,8 @@ def show_readout_results(df: pd.DataFrame):
 		ax.legend()
 
 	plt.show()
+
+	return fig, axes
 
 
 def plot_bar(df: pd.DataFrame, display: bool = True, **kwargs):

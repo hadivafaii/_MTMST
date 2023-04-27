@@ -386,7 +386,7 @@ class TrainerVAE(BaseTrainer):
 			xticklabels=_tx,
 			yticklabels=_ty,
 			annot_kws={'fontsize': 12},
-			figsize=(8, 6.5),
+			figsize=(0.72 * len(f), 0.6 * len(f)),
 			display=False,
 		)
 		figs['fig/regression'] = fig
@@ -423,6 +423,7 @@ class TrainerVAE(BaseTrainer):
 		mi_max = np.round(np.max(regr['regr/mi'], axis=1), 2)
 		mi_max = ', '.join([str(e) for e in mi_max])
 		title = f"model = {title};    max MI (row) = {mi_max}"
+		figsize = (0.08 * self.model.cfg.total_latents(), 0.72 * len(f))
 		fig, _ = plot_heatmap(
 			r=regr['regr/mi'],
 			yticklabels=_ty,
@@ -435,7 +436,7 @@ class TrainerVAE(BaseTrainer):
 			vmax=0.65,
 			cmap='rocket',
 			linecolor='dimgrey',
-			figsize=(30, 8),
+			figsize=figsize,
 			cbar=False,
 			annot=False,
 			display=False,

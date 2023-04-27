@@ -41,8 +41,9 @@ def true(s: str):
 	return str(s).lower() == 'true'
 
 
-def escape_parenthesis(s: str):
-	print(s.replace('(', '\(').replace(')', '\)'))
+def escape_parenthesis(fit_name: str):
+	for s in fit_name.split('/'):
+		print(s.replace('(', '\(').replace(')', '\)'))
 
 
 def to_np(x: Union[torch.Tensor, np.ndarray]):

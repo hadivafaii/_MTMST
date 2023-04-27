@@ -50,9 +50,6 @@ class ROFLDS(Dataset):
 	def __len__(self):
 		return len(self.x)
 
-	# def __getitem__(self, i):
-		# return self.x[i], self.norm[i]
-
 	def __getitem__(self, i):
 		if self.transform is not None:
 			x = self.transform(self.x[i])
@@ -305,10 +302,10 @@ def time_embed(x, lags, idxs=None):
 
 
 def simulation_combos():
-	combos = [('fixate', i) for i in [0, 1, 2, 4]]
+	combos = [('fixate', i) for i in [0, 1, 2, 4, 8]]
+	combos += [('transl', i) for i in [0, 1, 2, 4, 8]]
 	combos += [('terrain', i) for i in [1, 2, 4, 8]]
-	combos += [('transl', i) for i in [0, 2, 4]]
-	combos += [('obj', i) for i in [1, 2, 4]]
+	combos += [('obj', i) for i in [1, 2, 4, 8]]
 	return combos
 
 
@@ -372,7 +369,9 @@ def _main():
 		8: 5,
 	}
 	save_dir = '/home/hadi/Documents/MTMST/data'
-	pbar = tqdm(simulation_combos())
+	combos = simulation_combos()
+	print(f"Simulation combos:\n{combos}")
+	pbar = tqdm(combos)
 	for category, n_obj in pbar:
 		pbar.set_description(f"creating {category}{n_obj}")
 		alpha_dot, g, g_aux, attrs = generate_simulation(
