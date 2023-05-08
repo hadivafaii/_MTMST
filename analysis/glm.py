@@ -210,6 +210,8 @@ class Neuron(object):
 		return perf_r, perf_r2
 
 	def validate(self, idx: int):
+		if self.stim is None:
+			self.load_neurons()
 		kws = dict(
 			tr=self.tr,
 			kws_process=self.kws_xt,
@@ -292,7 +294,7 @@ class Neuron(object):
 		return setup_data(**kws)
 
 	def load_neurons(self):
-		if self.nc is not None:
+		if self.stim is not None:
 			return self
 		f = h5py.File(self.tr.model.cfg.h_file)
 		g = f[self.root][self.expt]
@@ -315,7 +317,11 @@ class Neuron(object):
 			print('[PROGRESS] neural data loaded')
 		return self
 
-	def load(self, fit_name: str, device: str, glm: bool = False):
+	def load(
+			self,
+			fit_name: str,
+			device: str = 'cpu',
+			glm: bool = False, ):
 		self.glm = glm
 		path = results_dir(fit_name, glm)
 		# load pickle
@@ -523,14 +529,13 @@ def summarize_neural_fits(
 	with open(args, 'r') as f:
 		args = json.load(f)
 	tr = pjoin(path, 'Trainer')
-	tr, _ = load_model_lite(
-		tr, device, strict=False)
+	tr, _ = load_model_lite(tr, device)
 
 	df, df_all, ro_all = [], [], {}
 	for f in sorted(os.listdir(path)):
-		if not f.endswith('.pkl'):
+		if not str(f).endswith('.pkl'):
 			continue
-		root = f.split('.')[0]
+		root = str(f).split('.')[0]
 		root, expt = root.split('-')
 		kws = dict(tr=tr, root=root, expt=expt)
 		ro = Neuron(**kws).load(fit_name, 'cpu')
@@ -601,10 +606,9 @@ def summarize_neural_fits(
 		e for e in info
 		if 'nf-' in e
 	].pop())
-	category = info[i - 1]
-	nf = int(info[i].split('-')[1])
-	df.insert(0, 'category', category)
-	df.insert(1, 'nf', nf)
+	df.insert(0, 'category', info[i - 1])
+	df.insert(1, 'nf', int(info[i].split('-')[1]))
+	df.insert(2, 'beta', tr.cfg.kl_beta)
 
 	save_obj(
 		obj=df,
@@ -621,6 +625,39 @@ def summarize_neural_fits(
 		mode='df',
 	)
 	return df, df_all, ro_all, args, tr
+
+
+def best_fits(df: pd.DataFrame, categories: List[str] = None):
+	if categories is None:
+		categories = df['category'].unique()
+	df_best = collections.defaultdict(list)
+	for expt in df['expt'].unique():
+		_df1 = df.loc[
+			(df['expt'] == expt) &
+			(df['category'].isin(categories))
+		]
+		for cell in _df1['cell'].unique():
+			_df2 = _df1.loc[_df1['cell'] == cell]
+			best_i = _df2['perf'].argmax()
+			best = dict(_df2.iloc[best_i])
+
+			_max = best.pop('perf')
+			_min = _df2['perf'].min()
+			mu = _df2['perf'].mean()
+			sd = _df2['perf'].std()
+
+			best['perf_best'] = _max
+			best['perf_worst'] = _min
+			best['perf_mu'] = mu
+			best['perf_sd'] = sd
+			best['%+'] = 100 * (_max - mu) / mu
+			best['%-'] = 100 * (_min - mu) / mu
+
+			for k, v in best.items():
+				df_best[k].append(v)
+	df_best = pd.DataFrame(df_best)
+	df_best = df_best.reset_index()
+	return df_best
 
 
 def push(
@@ -722,14 +759,15 @@ def setup_data(
 	return data
 
 
-def results_dir(fit_name: str, glm: bool = False):
+def results_dir(fit_name: str = None, glm: bool = False):
 	path = 'Documents/MTMST/results'
-	path = pjoin(
+	path = (
 		pjoin(os.environ['HOME'], path),
 		'GLM' if glm else 'Ridge',
-		fit_name,
 	)
-	return path
+	if fit_name is not None:
+		path += (fit_name, )
+	return pjoin(*path)
 
 
 def _setup_args() -> argparse.Namespace:
@@ -933,11 +971,15 @@ def _main():
 		nf = sum(nf.values())
 	else:
 		raise NotImplementedError
-	fit_name = '_'.join([
+	fit_name = [
 		name,
 		f"nf-{nf}",
+		f"beta-{tr.cfg.kl_beta:0.2g}",
 		f"({now(True)})",
-	])
+	]
+	if tr.model.vanilla:
+		fit_name.insert(0, 'vanilla')
+	fit_name = '_'.join(fit_name)
 	path = pjoin(
 		tr.model.cfg.results_dir,
 		'GLM' if args.glm else 'Ridge',

@@ -3,6 +3,8 @@ from torch.nn import functional as F
 from utils.plotting import *
 from vae.config_vae import (
 	ConfigVAE, ConfigTrainVAE)
+from ae.config_ae import (
+	ConfigAE, ConfigTrainAE)
 
 
 def beta_anneal_cosine(
@@ -112,6 +114,30 @@ class AvgrageMeter(object):
 		self.avg = self.sum / self.cnt
 
 
+def print_grad_table(
+		trainer,
+		metadata: dict,
+		clip: float = None,
+		thresholds: List[float] = None, ):
+	thresholds = thresholds if thresholds else [
+		1, 2, 5, 10, 20, 50, 100, 200]
+	clip = clip if clip else trainer.cfg.grad_clip
+	thresholds = [
+		clip * i for i
+		in thresholds
+	]
+	bad = np.array(list(trainer.stats['grad'].values()))
+
+	t = PrettyTable(['Threshold', '#', '%'])
+	for thres in thresholds:
+		tot = (bad > thres).sum()
+		perc = tot / metadata['global_step']
+		perc = np.round(100 * perc, 3)
+		t.add_row([int(thres), tot, perc])
+	print(t, '\n')
+	return
+
+
 def print_num_params(module: nn.Module):
 	t = PrettyTable(['Module Name', 'Num Params'])
 	for name, m in module.named_modules():
@@ -168,6 +194,8 @@ def load_model_lite(
 		state_dict=state_dict['model'],
 		strict=strict,
 	)
+	if device is None:
+		device = next(model.parameters()).device
 	trainer = TrainerVAE(
 		model=model,
 		cfg=cfg_train,
@@ -181,13 +209,14 @@ def load_model_lite(
 			strict=strict,
 		)
 	# optim, etc.
-	trainer.optim.load_state_dict(
-		state_dict['optim'])
-	trainer.scaler.load_state_dict(
-		state_dict['scaler'])
-	if trainer.optim_schedule is not None:
-		trainer.optim_schedule.load_state_dict(
-			state_dict.get('scheduler', {}))
+	if strict:
+		trainer.optim.load_state_dict(
+			state_dict['optim'])
+		trainer.scaler.load_state_dict(
+			state_dict['scaler'])
+		if trainer.optim_schedule is not None:
+			trainer.optim_schedule.load_state_dict(
+				state_dict.get('scheduler', {}))
 	stats = state_dict['metadata'].pop('stats', {})
 	trainer.stats.update(stats)
 	metadata = {
@@ -212,9 +241,12 @@ def load_model(
 	with open(pjoin(path, fname), 'r') as f:
 		cfg = json.load(f)
 	cfg = ConfigVAE(**cfg)
-	if fname.split('.')[0] == 'ConfigVAE':
+	fname = fname.split('.')[0]
+	if fname == 'ConfigVAE':
 		from vae.vae2d import VAE
 		model = VAE(cfg, verbose=verbose)
+	elif fname == 'ConfigAE':
+		raise NotImplementedError
 	else:
 		raise NotImplementedError
 	# now enter the fit folder
@@ -249,6 +281,8 @@ def load_model(
 		state_dict=state_dict['model'],
 		strict=strict,
 	)
+	if device is None:
+		device = next(model.parameters()).device
 	# cfg train
 	fname = next(
 		f for f in files if
@@ -257,7 +291,8 @@ def load_model(
 	with open(pjoin(path, fname), 'r') as f:
 		cfg_train = json.load(f)
 	cfg_train = ConfigTrainVAE(**cfg_train)
-	if fname.split('.')[0] == 'ConfigTrainVAE':
+	fname = fname.split('.')[0]
+	if fname == 'ConfigTrainVAE':
 		from vae.train_vae import TrainerVAE
 		trainer = TrainerVAE(
 			model=model,
@@ -266,6 +301,8 @@ def load_model(
 			verbose=verbose,
 			ema=ema,
 		)
+	elif fname == 'ConfigTrainAE':
+		raise NotImplementedError
 	else:
 		raise NotImplementedError
 	if ema:
@@ -273,13 +310,14 @@ def load_model(
 			state_dict=state_dict['model_ema'],
 			strict=strict,
 		)
-	trainer.optim.load_state_dict(
-		state_dict['optim'])
-	trainer.scaler.load_state_dict(
-		state_dict['scaler'])
-	if trainer.optim_schedule is not None:
-		trainer.optim_schedule.load_state_dict(
-			state_dict.get('scheduler', {}))
+	if strict:
+		trainer.optim.load_state_dict(
+			state_dict['optim'])
+		trainer.scaler.load_state_dict(
+			state_dict['scaler'])
+		if trainer.optim_schedule is not None:
+			trainer.optim_schedule.load_state_dict(
+				state_dict.get('scheduler', {}))
 	stats = state_dict['metadata'].pop('stats', {})
 	trainer.stats.update(stats)
 	metadata = {

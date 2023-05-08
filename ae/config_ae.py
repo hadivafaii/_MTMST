@@ -1,7 +1,7 @@
 from base.config_base import *
 
 
-class ConfigVAE(BaseConfig):
+class ConfigAE(BaseConfig):
 	def __init__(
 			self,
 			sim: str,
@@ -21,7 +21,6 @@ class ConfigVAE(BaseConfig):
 			n_groups_per_scale: int = 12,
 			activation_fn: str = 'swish',
 			balanced_recon: bool = True,
-			residual_kl: bool = True,
 			scale_init: bool = False,
 			separable: bool = False,
 			ada_groups: bool = True,
@@ -56,7 +55,7 @@ class ConfigVAE(BaseConfig):
 			n_groups_per_scale=self.n_groups_per_scale,
 			is_adaptive=ada_groups,
 		)
-		super(ConfigVAE, self).__init__(
+		super(ConfigAE, self).__init__(
 			sim_path=f"{sim}_dim-{input_sz}_n-750k",
 			name=self.name(),
 			full=full,
@@ -64,7 +63,6 @@ class ConfigVAE(BaseConfig):
 		)
 		self.balanced_recon = balanced_recon
 		self.activation_fn = activation_fn
-		self.residual_kl = residual_kl
 		self.scale_init = scale_init
 		self.ada_groups = ada_groups
 		self.use_se = use_se
@@ -111,15 +109,9 @@ class ConfigVAE(BaseConfig):
 		return sum(self.groups) * self.n_latent_per_group
 
 
-class ConfigTrainVAE(BaseConfigTrain):
+class ConfigTrainAE(BaseConfigTrain):
 	def __init__(
 			self,
-			kl_beta: float = 1.0,
-			kl_beta_min: float = 1e-4,
-			kl_balancer: str = 'equal',
-			kl_anneal_cycles: int = 0,
-			kl_anneal_portion: float = 0.3,
-			kl_const_portion: float = 1e-4,
 			lambda_anneal: bool = True,
 			lambda_init: float = 1e-7,
 			lambda_norm: float = 1e-3,
@@ -139,18 +131,12 @@ class ConfigTrainVAE(BaseConfigTrain):
 			ema_rate=0.999,
 			grad_clip=500,
 			use_amp=False,
-			chkpt_freq=10,
+			chkpt_freq=5,
 			eval_freq=2,
 			log_freq=10,
 		)
 		kwargs = setup_kwargs(defaults, kwargs)
-		super(ConfigTrainVAE, self).__init__(**kwargs)
-		self.kl_beta = kl_beta
-		self.kl_beta_min = kl_beta_min
-		self.kl_balancer = kl_balancer
-		self.kl_anneal_cycles = kl_anneal_cycles
-		self.kl_anneal_portion = kl_anneal_portion
-		self.kl_const_portion = kl_const_portion
+		super(ConfigTrainAE, self).__init__(**kwargs)
 		self.lambda_anneal = lambda_anneal
 		self.lambda_init = lambda_init
 		self.lambda_norm = lambda_norm
@@ -161,12 +147,7 @@ class ConfigTrainVAE(BaseConfigTrain):
 			'-'.join([
 				f"ep{self.epochs}",
 				f"b{self.batch_size}",
-				f"lr({self.lr:0.2g})",
-			]),
-			'-'.join([
-				f"beta({self.kl_beta:0.2g}"
-				f":{self.kl_anneal_cycles}"
-				f"x{self.kl_anneal_portion:0.1f})",
+				f"lr({self.lr:0.2g})"
 			]),
 		]
 		if self.lambda_norm > 0:

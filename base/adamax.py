@@ -64,8 +64,7 @@ class Adamax(torch.optim.Optimizer):
 				exp_inf[p.shape].append(state['exp_inf'])
 
 		for i in params:
-			# noinspection PyTypeChecker
-			params[i]['data'] = torch.stack(params[i]['data'], dim=0)
+			params[i]['data'] = torch.stack(params[i]['data'], dim=0)  # type: ignore
 			grads[i] = torch.stack(grads[i], dim=0)
 			exp_avg[i] = torch.stack(exp_avg[i], dim=0)
 			exp_inf[i] = torch.stack(exp_inf[i], dim=0)

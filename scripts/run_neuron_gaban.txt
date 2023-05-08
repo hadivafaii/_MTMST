@@ -1,0 +1,1 @@
+./fit_neuron.sh fixate0_k-32_z-20x[2,4,8]_enc\(1x3\)-dec\(1x2\)-pre\(1x3\)-post\(1x3\) ep160-b600-lr\(0.002\)_beta\(1:0x0.5\)_lamb\(0.0001\)_gr\(250.0\)_\(2023_05_07,10:42\) cuda

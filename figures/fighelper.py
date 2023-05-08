@@ -3,16 +3,16 @@ from analysis.helper import vel2polar
 from matplotlib.gridspec import GridSpec
 
 
-def show_neural_results(df: pd.DataFrame):
+def show_neural_results(df: pd.DataFrame, perf: str = 'perf'):
 	fig, axes = create_figure(2, 2, (9.5, 5), layout='constrained')
 	sns.histplot(
 		data=df,
-		x='perf',
+		x=perf,
 		bins=np.linspace(0, 1, 41),
 		label=r'$R$',
 		ax=axes[0, 0],
 	)
-	x = np.mean(df['perf'])
+	x = np.mean(df[perf])
 	axes[0, 0].axvline(x, color='r', ls='--', label=f"avg = {x:0.3f}")
 	axes[0, 0].locator_params(axis='x', nbins=12)
 	axes[0, 0].set(xlabel='')
@@ -353,7 +353,7 @@ def show_opticflow(
 	defaults = {
 		'figsize': (9, 9),
 		'tick_spacing': 4,
-		'title_fontsize': 15,
+		'title_fontsize': 11,
 		'layout': 'constrained',
 		'scale': None,
 	}

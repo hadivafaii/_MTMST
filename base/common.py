@@ -3,26 +3,26 @@ MULT = 2
 
 
 def endpoint_error(
-		true: torch.Tensor,
-		pred: torch.Tensor,
+		y_true: torch.Tensor,
+		y_pred: torch.Tensor,
 		dim: int = 1, ):
 	epe = torch.linalg.norm(
-		true - pred, dim=dim)
+		y_true - y_pred, dim=dim)
 	epe = torch.sum(epe, dim=[1, 2])
 	return epe
 
 
 def endpoint_error_batch(
-		true: torch.Tensor,
-		pred: torch.Tensor,
+		y_true: torch.Tensor,
+		y_pred: torch.Tensor,
 		batch: int = 512,
 		dim: int = 1, ):
-	delta = true - pred
+	delta = y_true - y_pred
 	epe = []
-	n = int(np.ceil(len(true) / batch))
+	n = int(np.ceil(len(y_true) / batch))
 	for i in range(n):
 		a = i * batch
-		b = min((i+1) * batch, len(true))
+		b = min((i+1) * batch, len(y_true))
 		epe.append(torch.linalg.norm(
 			delta[range(a, b)], dim=dim,
 		))

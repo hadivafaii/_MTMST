@@ -7,6 +7,89 @@ from sklearn import decomposition as sk_decomp
 from sklearn import model_selection as sk_modselect
 
 
+def save_script_vae(
+		sims: List[str],
+		device: str,
+		args: List[str] = None,
+		path: str = 'Dropbox/git/_MTMST/scripts', ):
+	def _make_script(i):
+		s = f"./fit_vae.sh {sims[i]} {device}"
+		if args[i] is not None:
+			s = f"{s} {args[i]}"
+		return s
+
+	if not isinstance(sims, list):
+		sims = [sims]
+	if args is None:
+		args = [None] * len(sims)
+	elif not isinstance(args, list):
+		args = [args]
+	assert len(sims) == len(args)
+
+	from base.dataset import simulation_combos
+	combos = [
+		f"{t[0]}{t[1]}" for t
+		in simulation_combos()
+	]
+	assert all(s in combos for s in sims)
+
+	path = pjoin(os.environ['HOME'], path)
+	if isinstance(sims, list):
+		scripts = [
+			_make_script(i) for
+			i in range(len(sims))
+		]
+		scripts = ' && '.join(scripts)
+	else:
+		return
+	if not scripts:
+		return
+	fname = f"run_vae_{os.uname().nodename}"
+	save_obj(
+		obj=scripts,
+		file_name=fname,
+		save_dir=path,
+		mode='txt',
+	)
+	return
+
+
+def save_script_neural(
+		fits: List[str],
+		device: str,
+		args: str = None,
+		path: str = 'Dropbox/git/_MTMST/scripts', ):
+	def _make_script(f):
+		s = f.replace('(', '\(').replace(')', '\)')
+		s = ' '.join(s.split('/'))
+		s = f"./fit_neuron.sh {s} {device}"
+		if args is not None:
+			s = f"{s} {args}"
+		return s
+
+	path = pjoin(os.environ['HOME'], path)
+	if isinstance(fits, list):
+		scripts = [
+			_make_script(fit)
+			for fit in fits
+		]
+		scripts = ' && '.join(scripts)
+	elif isinstance(fits, str):
+		scripts = _make_script(fits)
+	else:
+		return
+	if not scripts:
+		return
+	fname = f"run_neuron_{os.uname().nodename}"
+	save_obj(
+		obj=scripts,
+		file_name=fname,
+		save_dir=path,
+		mode='txt',
+	)
+	return
+
+
 def compute_ed(s):
 	return sum(s)**2 / sum(s**2)
 
@@ -84,7 +167,7 @@ def entropy_discrete(a: np.ndarray, n_bins: int):
 	return ent
 
 
-def entropy_normalized(p: np.ndarray, axis: int):
+def entropy_normalized(p: np.ndarray, axis: int = 0):
 	return sp_stats.entropy(p, axis=axis, base=p.shape[axis])
 
 
@@ -93,18 +176,18 @@ def flatten_stim(x):
 
 
 def null_adj_ll(
-		true: np.ndarray,
-		pred: np.ndarray,
+		y_true: np.ndarray,
+		y_pred: np.ndarray,
 		axis: int = 0,
 		normalize: bool = True,
 		return_lls: bool = False, ):
-	kws = {
-		'true': true,
-		'axis': axis,
-		'normalize': normalize,
-	}
-	ll = poisson_ll(pred=pred, **kws)
-	null = poisson_ll(pred=true.mean(axis), **kws)
+	kws = dict(
+		axis=axis,
+		y_true=y_true,
+		normalize=normalize,
+	)
+	ll = poisson_ll(y_pred=y_pred, **kws)
+	null = poisson_ll(y_pred=y_true.mean(axis), **kws)
 	if return_lls:
 		return ll, null
 	else:
@@ -112,14 +195,14 @@ def null_adj_ll(
 
 
 def poisson_ll(
-		true: np.ndarray,
-		pred: np.ndarray,
+		y_true: np.ndarray,
+		y_pred: np.ndarray,
 		axis: int = 0,
 		normalize: bool = True,
 		eps: float = 1e-8, ):
-	ll = np.sum(true * np.log(pred + eps) - pred, axis=axis)
+	ll = np.sum(y_true * np.log(y_pred + eps) - y_pred, axis=axis)
 	if normalize:
-		ll /= np.maximum(eps, np.sum(true, axis=axis))
+		ll /= np.maximum(eps, np.sum(y_true, axis=axis))
 	return ll
 
 
