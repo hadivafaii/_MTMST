@@ -163,46 +163,80 @@ def print_num_params(module: nn.Module):
 	return
 
 
-def load_model_lite(
+def load_model_lite(  # TODO: make it worh for both VAE + AE
 		path: str,
 		device: str = 'cpu',
 		strict: bool = True,
 		verbose: bool = False, ):
-	# cfg model + trainer
-	cfg = pjoin(path, 'ConfigVAE.json')
-	cfg_train = pjoin(path, 'ConfigTrainVAE.json')
+	# load model
+	cfg = next(
+		e for e in os.listdir(path)
+		if e.startswith('Config')
+		and e.endswith('.json')
+		and 'Train' not in e
+	)
+	fname = cfg.split('.')[0]
+	cfg = pjoin(path, cfg)
 	with open(cfg, 'r') as f:
 		cfg = json.load(f)
-	with open(cfg_train, 'r') as f:
-		cfg_train = json.load(f)
-	cfg = ConfigVAE(**cfg)
-	cfg_train = ConfigTrainVAE(**cfg_train)
+	if fname.endswith('VAE'):
+		from vae.vae2d import VAE
+		cfg = ConfigVAE(**cfg)
+		model = VAE(cfg, verbose=verbose)
+	elif fname.endswith('AE'):
+		cfg = ConfigAE(**cfg)
+		from ae.ae2d import AE
+		model = AE(cfg, verbose=verbose)
+	else:
+		raise NotImplementedError
+
 	# state dict
 	fname_pt = next(
 		f for f in os.listdir(path)
 		if f.split('.')[-1] == 'pt'
 	)
 	state_dict = pjoin(path, fname_pt)
-	state_dict = torch.load(state_dict, device)
+	state_dict = torch.load(state_dict, 'cpu')
 	ema = state_dict['model_ema'] is not None
-
-	# create model + trainer
-	from vae.vae2d import VAE
-	from vae.train_vae import TrainerVAE
-	model = VAE(cfg, verbose=verbose)
 	model.load_state_dict(
 		state_dict=state_dict['model'],
 		strict=strict,
 	)
-	if device is None:
-		device = next(model.parameters()).device
-	trainer = TrainerVAE(
-		model=model,
-		cfg=cfg_train,
-		device=device,
-		verbose=verbose,
-		ema=ema,
+
+	# trainer
+	cfg_train = next(
+		e for e in os.listdir(path)
+		if e.startswith('Config')
+		and e.endswith('.json')
+		and 'Train' in e
 	)
+	fname = cfg_train.split('.')[0]
+	cfg_train = pjoin(path, cfg_train)
+	with open(cfg_train, 'r') as f:
+		cfg_train = json.load(f)
+	if fname.endswith('VAE'):
+		from vae.train_vae import TrainerVAE
+		cfg_train = ConfigTrainVAE(**cfg_train)
+		trainer = TrainerVAE(
+			model=model,
+			cfg=cfg_train,
+			device=device,
+			verbose=verbose,
+			ema=ema,
+		)
+	elif fname.endswith('AE'):
+		from ae.train_ae import TrainerAE
+		cfg_train = ConfigTrainAE(**cfg_train)
+		trainer = TrainerAE(
+			model=model,
+			cfg=cfg_train,
+			device=device,
+			verbose=verbose,
+			ema=ema,
+		)
+	else:
+		raise NotImplementedError
+
 	if ema:
 		trainer.model_ema.load_state_dict(
 			state_dict=state_dict['model_ema'],
@@ -240,13 +274,15 @@ def load_model(
 	fname = next(s for s in os.listdir(path) if 'json' in s)
 	with open(pjoin(path, fname), 'r') as f:
 		cfg = json.load(f)
-	cfg = ConfigVAE(**cfg)
 	fname = fname.split('.')[0]
 	if fname == 'ConfigVAE':
+		cfg = ConfigVAE(**cfg)
 		from vae.vae2d import VAE
 		model = VAE(cfg, verbose=verbose)
 	elif fname == 'ConfigAE':
-		raise NotImplementedError
+		cfg = ConfigAE(**cfg)
+		from ae.ae2d import AE
+		model = AE(cfg, verbose=verbose)
 	else:
 		raise NotImplementedError
 	# now enter the fit folder
@@ -275,14 +311,12 @@ def load_model(
 			checkpoint == _chkpt(f)
 		)
 	state_dict = pjoin(path, fname_pt)
-	state_dict = torch.load(state_dict, device)
+	state_dict = torch.load(state_dict, 'cpu')
 	ema = state_dict['model_ema'] is not None
 	model.load_state_dict(
 		state_dict=state_dict['model'],
 		strict=strict,
 	)
-	if device is None:
-		device = next(model.parameters()).device
 	# cfg train
 	fname = next(
 		f for f in files if
@@ -290,9 +324,9 @@ def load_model(
 	)
 	with open(pjoin(path, fname), 'r') as f:
 		cfg_train = json.load(f)
-	cfg_train = ConfigTrainVAE(**cfg_train)
 	fname = fname.split('.')[0]
 	if fname == 'ConfigTrainVAE':
+		cfg_train = ConfigTrainVAE(**cfg_train)
 		from vae.train_vae import TrainerVAE
 		trainer = TrainerVAE(
 			model=model,
@@ -302,7 +336,15 @@ def load_model(
 			ema=ema,
 		)
 	elif fname == 'ConfigTrainAE':
-		raise NotImplementedError
+		cfg_train = ConfigTrainAE(**cfg_train)
+		from ae.train_ae import TrainerAE
+		trainer = TrainerAE(
+			model=model,
+			cfg=cfg_train,
+			device=device,
+			verbose=verbose,
+			ema=ema,
+		)
 	else:
 		raise NotImplementedError
 	if ema:

@@ -247,40 +247,38 @@ class TrainerVAE(BaseTrainer):
 
 	def forward(
 			self,
-			dl_name: str,
+			dl: str,
 			freeze: bool = False,
 			use_ema: bool = False, ):
-		assert dl_name in ['trn', 'vld', 'tst']
-		dl = getattr(self, f"dl_{dl_name}")
+		assert dl in ['trn', 'vld', 'tst']
+		dl = getattr(self, f"dl_{dl}")
 		if dl is None:
 			return
 		model = self.select_model(use_ema)
 
-		epe, kl, kl_diag = [], [], []
+		epe, kl = [], []
 		x_all, y_all, z_all = [], [], []
 		for i, (x, norm) in enumerate(dl):
 			if x.device != self.device:
 				x, norm = self.to([x, norm])
-			z, _, y, q, p = model.xtract_ftr(
+			y, z, q, p, *_ = model.xtract_ftr(
 				x=x, t=0.0 if freeze else 1.0)
 			z = torch.cat(z, dim=1).squeeze()
 			# data
-			if dl_name == 'trn':
+			if dl == 'trn':
 				x_all.append(to_np(x))
 				y_all.append(to_np(y))
 			z_all.append(to_np(z))
 			# loss
 			epe.append(to_np(model.loss_recon(
 				x=x, y=y, w=1 / norm)))
-			kl_all, diag = model.loss_kl(q, p)
+			kl_all, _ = model.loss_kl(q, p)
 			kl.append(to_np(sum(kl_all)))
-			kl_diag.append(to_np(torch.cat(
-				diag).unsqueeze(0)))
 
-		x, y, z, epe, kl, kl_diag = cat_map(
-			[x_all, y_all, z_all, epe, kl, kl_diag])
+		x, y, z, epe, kl = cat_map(
+			[x_all, y_all, z_all, epe, kl])
 		data = {'x': x, 'y': y, 'z': z}
-		loss = {'epe': epe, 'kl': kl, 'kl_diag': kl_diag.mean(0)}
+		loss = {'epe': epe, 'kl': kl}
 		return data, loss
 
 	def sample(
@@ -346,8 +344,7 @@ class TrainerVAE(BaseTrainer):
 		output = {
 			'z_vld': z_vld,
 			'z_tst': z_tst,
-			**regr,
-			**regr_aux,
+			**regr, **regr_aux,
 		}
 		return output
 
@@ -689,24 +686,6 @@ def _setup_args() -> argparse.Namespace:
 		type=int,
 	)
 	parser.add_argument(
-		"--chkpt_freq",
-		help='checkpoint freq',
-		default=10,
-		type=int,
-	)
-	parser.add_argument(
-		"--eval_freq",
-		help='eval freq',
-		default=2,
-		type=int,
-	)
-	parser.add_argument(
-		"--log_freq",
-		help='log freq',
-		default=10,
-		type=int,
-	)
-	parser.add_argument(
 		"--dry_run",
 		help='to make sure config is alright',
 		action='store_true',
@@ -765,11 +744,7 @@ def _main():
 			# weight reg
 			lambda_anneal=args.lambda_anneal,
 			lambda_norm=args.lambda_norm,
-			lambda_init=1e-7,
-			# freqs
-			chkpt_freq=args.chkpt_freq,
-			eval_freq=args.eval_freq,
-			log_freq=args.log_freq),
+			lambda_init=1e-7),
 	)
 	msg = ', '.join([
 		f"# enc ftrs: {sum(vae.ftr_sizes()[0].values())}",

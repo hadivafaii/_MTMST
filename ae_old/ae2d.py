@@ -1,10 +1,9 @@
 from base.common import *
-from .distributions import Normal
 
 
-class VAE(Module):
-	def __init__(self, cfg: ConfigVAE, **kwargs):
-		super(VAE, self).__init__(cfg, **kwargs)
+class AE(Module):
+	def __init__(self, cfg: ConfigAE, **kwargs):
+		super(AE, self).__init__(cfg, **kwargs)
 		self._init()
 		if self.verbose:
 			self.print()
@@ -45,96 +44,47 @@ class VAE(Module):
 		p_all = [dist]
 
 		# begin decoder pathway
-		if not self.vanilla:
-			s = self.prior_ftr0.unsqueeze(0)
-			s = s.expand(z.size(0), -1, -1, -1)
-			for cell in self.dec_tower:
-				if isinstance(cell, CombinerDec):
-					if idx > 0:
-						# form prior
-						param = self.dec_sampler[idx - 1](s)
-						mu_p, logsig_p = torch.chunk(param, 2, dim=1)
-						dist = Normal(mu_p, logsig_p)
-						p_all.append(dist)
+		s = self.prior_ftr0.unsqueeze(0)
+		s = s.expand(z.size(0), -1, -1, -1)
+		for cell in self.dec_tower:
+			if isinstance(cell, CombinerDec):
+				if idx > 0:
+					# form prior
+					param = self.dec_sampler[idx - 1](s)
+					mu_p, logsig_p = torch.chunk(param, 2, dim=1)
+					dist = Normal(mu_p, logsig_p)
+					p_all.append(dist)
 
-						# form encoder
-						param = comb_enc[idx - 1](comb_s[idx - 1], s)
-						param = self.enc_sampler[idx](param)
-						mu_q, logsig_q = torch.chunk(param, 2, dim=1)
-						if self.cfg.residual_kl:
-							dist = Normal(
-								mu=mu_q + mu_p,
-								logsig=logsig_q + logsig_p,
-							)
-						else:
-							dist = Normal(
-								mu=mu_q,
-								logsig=logsig_q,
-							)
-						q_all.append(dist)
-						z = dist.sample()
-						latents.append(z)
-					# 'combiner_dec'
-					s = cell(s, self.expand[idx](z))
-					idx += 1
-				else:
-					s = cell(s)
-		else:
+					# form encoder
+					param = comb_enc[idx - 1](comb_s[idx - 1], s)
+					param = self.enc_sampler[idx](param)
+					mu_q, logsig_q = torch.chunk(param, 2, dim=1)
+					if self.cfg.residual_kl:
+						dist = Normal(
+							mu=mu_q + mu_p,
+							logsig=logsig_q + logsig_p,
+						)
+					else:
+						dist = Normal(
+							mu=mu_q,
+							logsig=logsig_q,
+						)
+					q_all.append(dist)
+					z = dist.sample()
+					latents.append(z)
+				# 'combiner_dec'
+				s = cell(s, self.expand[idx](z))
+				idx += 1
+			else:
+				s = cell(s)
+
+		if self.vanilla:
 			s = self.stem_decoder(z)
 
 		for cell in self.post_process:
 			s = cell(s)
 
 		return self.out(s), latents, q_all, p_all
-
-	@torch.no_grad()
-	def sample(
-			self,
-			n: int = 1024,
-			t: float = 1.0,
-			device: torch.device = None, ):
-		kws = dict(
-			temp=t,
-			device=device,
-			seed=self.cfg.seed,
-		)
-		z0_sz = [n] + self.z0_sz
-		mu = torch.zeros(z0_sz)
-		logsig = torch.zeros(z0_sz)
-		if device is not None:
-			mu = mu.to(device)
-			logsig = logsig.to(device)
-		dist = Normal(mu, logsig, **kws)
-		z = dist.sample()
-		p_all = [dist]
-		latents = [z]
-
-		if not self.vanilla:
-			idx = 0
-			s = self.prior_ftr0.unsqueeze(0)
-			s = s.expand(z.size(0), -1, -1, -1)
-			for cell in self.dec_tower:
-				if isinstance(cell, CombinerDec):
-					if idx > 0:
-						# form prior
-						param = self.dec_sampler[idx - 1](s)
-						mu, logsig = torch.chunk(param, 2, dim=1)
-						dist = Normal(mu, logsig, **kws)
-						p_all.append(dist)
-						z = dist.sample()
-						latents.append(z)
-					# 'combiner_dec'
-					s = cell(s, self.expand[idx](z))
-					idx += 1
-				else:
-					s = cell(s)
-		else:
-			s = self.stem_decoder(z)
-
-		for cell in self.post_process:
-			s = cell(s)
-
-		return self.out(s), latents, p_all
 
 	@torch.no_grad()
 	def xtract_ftr(self, x, t: float = 0, full: bool = False):
@@ -180,45 +130,45 @@ class VAE(Module):
 		p_all = [dist]
 
 		# dec
-		if not self.vanilla:
-			s = self.prior_ftr0.unsqueeze(0)
-			s = s.expand(z.size(0), -1, -1, -1)
-			for cell in self.dec_tower:
-				if isinstance(cell, CombinerDec):
-					if idx > 0:
-						# form prior
-						param = self.dec_sampler[idx - 1](s)
-						mu_p, logsig_p = torch.chunk(param, 2, dim=1)
-						dist = Normal(mu_p, logsig_p, **kws)
-						p_all.append(dist)
+		s = self.prior_ftr0.unsqueeze(0)
+		s = s.expand(z.size(0), -1, -1, -1)
+		for cell in self.dec_tower:
+			if isinstance(cell, CombinerDec):
+				if idx > 0:
+					# form prior
+					param = self.dec_sampler[idx - 1](s)
+					mu_p, logsig_p = torch.chunk(param, 2, dim=1)
+					dist = Normal(mu_p, logsig_p, **kws)
+					p_all.append(dist)
 
-						# form encoder
-						param = comb_enc[idx - 1](comb_s[idx - 1], s)
-						param = self.enc_sampler[idx](param)
-						mu_q, logsig_q = torch.chunk(param, 2, dim=1)
-						if self.cfg.residual_kl:
-							dist = Normal(
-								mu=mu_q + mu_p,
-								logsig=logsig_q + logsig_p,
-								**kws,
-							)
-						else:
-							dist = Normal(
-								mu=mu_q,
-								logsig=logsig_q,
-								**kws,
-							)
-						q_all.append(dist)
-						z = dist.sample()
-						latents.append(z)
-					# 'combiner_dec'
-					s = cell(s, self.expand[idx](z))
-					idx += 1
-				else:
-					s = cell(s)
-					if full and s.size(-1) in self.scales:
-						ftr_dec[s.size(-1)].append(s)
-		else:
+					# form encoder
+					param = comb_enc[idx - 1](comb_s[idx - 1], s)
+					param = self.enc_sampler[idx](param)
+					mu_q, logsig_q = torch.chunk(param, 2, dim=1)
+					if self.cfg.residual_kl:
+						dist = Normal(
+							mu=mu_q + mu_p,
+							logsig=logsig_q + logsig_p,
+							**kws,
+						)
+					else:
+						dist = Normal(
+							mu=mu_q,
+							logsig=logsig_q,
+							**kws,
+						)
+					q_all.append(dist)
+					z = dist.sample()
+					latents.append(z)
+				# 'combiner_dec'
+				s = cell(s, self.expand[idx](z))
+				idx += 1
+			else:
+				s = cell(s)
+				if full and s.size(-1) in self.scales:
+					ftr_dec[s.size(-1)].append(s)
+
+		if self.vanilla:
 			s = self.stem_decoder(z)
 			if full and s.size(-1) in self.scales:
 				ftr_dec[s.size(-1)].append(s)
@@ -231,7 +181,7 @@ class VAE(Module):
 			}
 		else:
 			ftr = None
-		return latents, ftr, self.out(s), q_all, p_all
+		return self.out(s), latents, q_all, p_all, ftr
 
 	def ftr_sizes(self):
 		n_ftrs_enc = collections.defaultdict(list)
@@ -421,11 +371,10 @@ class VAE(Module):
 			self.scales[-1],
 			self.scales[-1],
 		]
-		if not self.vanilla:
-			self.prior_ftr0 = nn.Parameter(
-				data=torch.rand(prior_ftr0_sz),
-				requires_grad=True,
-			)
+		self.prior_ftr0 = nn.Parameter(
+			data=torch.rand(prior_ftr0_sz),
+			requires_grad=True,
+		)
 		return
 
 	def _init_stem(self):
@@ -561,8 +510,7 @@ class VAE(Module):
 			mult /= MULT
 		self.enc_sampler = enc_sampler
 		self.dec_sampler = dec_sampler
-		if not self.vanilla:
-			self.expand = expand
+		self.expand = expand
 		return
 
 	def _init_dec(self, mult):

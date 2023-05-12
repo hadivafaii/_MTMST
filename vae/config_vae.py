@@ -17,7 +17,7 @@ class ConfigVAE(BaseConfig):
 			n_post_cells: int = 3,
 			n_post_blocks: int = 1,
 			n_latent_scales: int = 3,
-			n_latent_per_group: int = 13,
+			n_latent_per_group: int = 20,
 			n_groups_per_scale: int = 12,
 			activation_fn: str = 'swish',
 			balanced_recon: bool = True,
@@ -51,7 +51,7 @@ class ConfigVAE(BaseConfig):
 		self.separable = separable
 		self.compress = compress
 		self.use_bn = use_bn
-		self.groups = _groups_per_scale(
+		self.groups = groups_per_scale(
 			n_scales=self.n_latent_scales,
 			n_groups_per_scale=self.n_groups_per_scale,
 			is_adaptive=ada_groups,
@@ -118,8 +118,8 @@ class ConfigTrainVAE(BaseConfigTrain):
 			kl_beta_min: float = 1e-4,
 			kl_balancer: str = 'equal',
 			kl_anneal_cycles: int = 0,
-			kl_anneal_portion: float = 0.3,
-			kl_const_portion: float = 1e-4,
+			kl_anneal_portion: float = 0.5,
+			kl_const_portion: float = 1e-2,
 			lambda_anneal: bool = True,
 			lambda_init: float = 1e-7,
 			lambda_norm: float = 1e-3,
@@ -128,16 +128,16 @@ class ConfigTrainVAE(BaseConfigTrain):
 	):
 		defaults = dict(
 			lr=0.002,
-			epochs=200,
-			batch_size=500,
+			epochs=160,
+			batch_size=600,
 			warm_restart=0,
-			warmup_portion=0.02,
+			warmup_portion=1.25e-2,
 			optimizer='adamax_fast',
 			optimizer_kws=None,
 			scheduler_type='cosine',
 			scheduler_kws=None,
 			ema_rate=0.999,
-			grad_clip=500,
+			grad_clip=250,
 			use_amp=False,
 			chkpt_freq=10,
 			eval_freq=2,
@@ -176,7 +176,7 @@ class ConfigTrainVAE(BaseConfigTrain):
 		return '_'.join(name)
 
 
-def _groups_per_scale(
+def groups_per_scale(
 		n_scales: int,
 		n_groups_per_scale: int,
 		is_adaptive: bool = True,

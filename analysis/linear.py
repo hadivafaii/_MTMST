@@ -260,9 +260,9 @@ class LinearModel(Obj):
 
 def compute_sta(
 		n_lags: int,
-		good: np.ndarray,
 		stim: np.ndarray,
 		spks: np.ndarray,
+		good: np.ndarray = None,
 		zscore: bool = True,
 		nanzero: bool = True,
 		verbose: bool = False, ):
@@ -273,7 +273,10 @@ def compute_sta(
 	shape = (nc,) + (1,) * len(shape)
 	if zscore:
 		stim = sp_stats.zscore(stim)
-	inds = good.copy()
+	if good is None:
+		inds = np.arange(len(stim))
+	else:
+		inds = good.copy()
 	inds = inds[inds > n_lags]
 	for t in tqdm(inds, disable=not verbose):
 		# zero n_lags allowed:
@@ -287,5 +290,6 @@ def compute_sta(
 	sta /= n
 	if nanzero:
 		sta[np.isnan(sta)] = 0.0
-		warnings.warn("NaN in STA", RuntimeWarning)
+		if verbose:
+			warnings.warn("NaN in STA", RuntimeWarning)
 	return sta

@@ -7,7 +7,7 @@ class BaseTrainer(object):
 	def __init__(
 			self,
 			model: Module,
-			cfg: ConfigTrainVAE,  # TODO: Implemenet ConfigTrain
+			cfg: Any,
 			device: str = 'cpu',
 			verbose: bool = False,
 	):
@@ -41,9 +41,9 @@ class BaseTrainer(object):
 				self.model.parameters()
 			])
 			if tot // 1e6 > 0:
-				tot = f"{np.round(tot / 1e6, 2):1.1f} M"
+				tot = f"{tot / 1e6:0.1f} M"
 			elif tot // 1e3 > 0:
-				tot = f"{np.round(tot / 1e3, 2):1.1f} K"
+				tot = f"{tot / 1e3:0.1f} K"
 			print(f"\n# params: {tot}")
 
 	def train(

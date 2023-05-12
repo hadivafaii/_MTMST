@@ -64,6 +64,7 @@ class Neuron(object):
 		self.spks, self.spks_r = None, None
 		self.good, self.good_r = None, None
 		self.has_repeats, self.nc = None, None
+		self.ftr, self.ftr_r = None, None
 		# fitted attributes
 		self.logger = None
 		self.best_pix = {}
@@ -212,20 +213,21 @@ class Neuron(object):
 	def validate(self, idx: int):
 		if self.stim is None:
 			self.load_neurons()
-		kws = dict(
-			tr=self.tr,
-			kws_process=self.kws_xt,
-			verbose=self.verbose,
-			dtype=self.dtype,
-			max_pool=False,
-			**self.kws_push,
-		)
-		ftr, _ = push(stim=self.stim, **kws)
-		ftr_r, _ = push(stim=self.stim_r, **kws)
-		# global normalzie
-		ftr = normalize_global(ftr, self.mu, self.sd)
-		ftr_r = normalize_global(ftr_r, self.mu, self.sd)
-		data = self.get_data(idx, ftr, ftr_r)
+		if self.ftr is None:
+			kws = dict(
+				tr=self.tr,
+				kws_process=self.kws_xt,
+				verbose=self.verbose,
+				dtype=self.dtype,
+				max_pool=False,
+				**self.kws_push,
+			)
+			ftr, _ = push(stim=self.stim, **kws)
+			ftr_r, _ = push(stim=self.stim_r, **kws)
+			# global normalzie
+			self.ftr = normalize_global(ftr, self.mu, self.sd)
+			self.ftr_r = normalize_global(ftr_r, self.mu, self.sd)
+		data = self.get_data(idx)
 		if not self.use_latents:
 			data['x'] = self.pca[idx].transform(data['x'])
 			if self.has_repeats:
@@ -272,7 +274,8 @@ class Neuron(object):
 		if ftr is None:
 			ftr = self.ftr
 		if ftr_r is None:
-			ftr_r = self.ftr_r
+			if self.has_repeats:
+				ftr_r = self.ftr_r
 		if lag is None:
 			lag = self.best_lag[idx]
 		if pix is None and not self.use_latents:
@@ -529,7 +532,8 @@ def summarize_neural_fits(
 	with open(args, 'r') as f:
 		args = json.load(f)
 	tr = pjoin(path, 'Trainer')
-	tr, _ = load_model_lite(tr, device)
+	tr, _ = load_model_lite(
+		tr, device, strict=False)
 
 	df, df_all, ro_all = [], [], {}
 	for f in sorted(os.listdir(path)):
@@ -701,7 +705,7 @@ def push(
 	for i in tqdm(range(n_iter), disable=not verbose):
 		a = i * tr.cfg.batch_size
 		b = min(a + tr.cfg.batch_size, len(x))
-		_, z, *_, ftr = m.xtract_ftr(
+		z, ftr, *_ = m.xtract_ftr(
 			tr.to(stim[a:b]), full=True)
 		if which == 'z':
 			z = torch.cat(z, dim=1).squeeze()
@@ -799,6 +803,12 @@ def _setup_args() -> argparse.Namespace:
 		help='checkpoint',
 		default=-1,
 		type=int,
+	)
+	parser.add_argument(
+		"--strict",
+		help='strict load?',
+		default=False,
+		type=true,
 	)
 	parser.add_argument(
 		"--reservoir",
@@ -932,6 +942,7 @@ def _main():
 			model_name=args.model_name,
 			fit_name=args.fit_name,
 			checkpoint=args.checkpoint,
+			strict=args.strict,
 			device=args.device,
 			path=path,
 		)
@@ -941,6 +952,7 @@ def _main():
 			model_name=args.model_name,
 			fit_name=args.fit_name,
 			checkpoint=args.checkpoint,
+			strict=args.strict,
 			device=args.device,
 			path=path,
 		)
@@ -974,7 +986,7 @@ def _main():
 	fit_name = [
 		name,
 		f"nf-{nf}",
-		f"beta-{tr.cfg.kl_beta:0.2g}",
+		f"beta-{tr.cfg.kl_beta}",
 		f"({now(True)})",
 	]
 	if tr.model.vanilla:

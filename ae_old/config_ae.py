@@ -1,5 +1,4 @@
 from base.config_base import *
-from vae.config_vae import groups_per_scale
 
 
 class ConfigAE(BaseConfig):
@@ -18,7 +17,7 @@ class ConfigAE(BaseConfig):
 			n_post_cells: int = 3,
 			n_post_blocks: int = 1,
 			n_latent_scales: int = 3,
-			n_latent_per_group: int = 20,
+			n_latent_per_group: int = 13,
 			n_groups_per_scale: int = 12,
 			activation_fn: str = 'swish',
 			balanced_recon: bool = True,
@@ -51,7 +50,7 @@ class ConfigAE(BaseConfig):
 		self.separable = separable
 		self.compress = compress
 		self.use_bn = use_bn
-		self.groups = groups_per_scale(
+		self.groups = _groups_per_scale(
 			n_scales=self.n_latent_scales,
 			n_groups_per_scale=self.n_groups_per_scale,
 			is_adaptive=ada_groups,
@@ -73,7 +72,7 @@ class ConfigAE(BaseConfig):
 			str(self.sim),
 			f"k-{self.n_ch}",
 			'x'.join([
-				f"h-{self.n_latent_per_group}",
+				f"z-{self.n_latent_per_group}",
 				str(list(reversed(self.groups))),
 			]).replace(' ', ''),
 			'-'.join([
@@ -121,18 +120,18 @@ class ConfigTrainAE(BaseConfigTrain):
 	):
 		defaults = dict(
 			lr=0.002,
-			epochs=160,
-			batch_size=600,
+			epochs=200,
+			batch_size=500,
 			warm_restart=0,
-			warmup_portion=1.25e-2,
+			warmup_portion=0.02,
 			optimizer='adamax_fast',
 			optimizer_kws=None,
 			scheduler_type='cosine',
 			scheduler_kws=None,
 			ema_rate=0.999,
-			grad_clip=250,
+			grad_clip=500,
 			use_amp=False,
-			chkpt_freq=10,
+			chkpt_freq=5,
 			eval_freq=2,
 			log_freq=10,
 		)
@@ -142,7 +141,6 @@ class ConfigTrainAE(BaseConfigTrain):
 		self.lambda_init = lambda_init
 		self.lambda_norm = lambda_norm
 		self.spectral_reg = spectral_reg
-		self.kl_beta = 'ae'
 
 	def name(self):
 		name = [
@@ -157,3 +155,20 @@ class ConfigTrainAE(BaseConfigTrain):
 		if self.grad_clip is not None:
 			name.append(f"gr({self.grad_clip})")
 		return '_'.join(name)
+
+
+def _groups_per_scale(
+		n_scales: int,
+		n_groups_per_scale: int,
+		is_adaptive: bool = True,
+		min_groups: int = 2,
+		divider: int = 2, ):
+	assert n_groups_per_scale >= 1
+	n = n_groups_per_scale
+	g = []
+	for _ in range(n_scales):
+		g.append(n)
+		if is_adaptive:
+			n = n // divider
+			n = max(min_groups, n)
+	return g

@@ -29,72 +29,37 @@ class AE(Module):
 
 		idx = 0
 		ftr_enc0 = self.enc0(s)
-		param0 = self.enc_sampler[idx](ftr_enc0)
-		mu_q, logsig_q = torch.chunk(param0, 2, dim=1)
-		dist = Normal(mu_q, logsig_q)  # first approx. posterior
-		z = dist.sample()
-		q_all = [dist]
-		latents = [z]
-
-		# prior for z0
-		dist = Normal(
-			mu=torch.zeros_like(z),
-			logsig=torch.zeros_like(z),
-		)
-		p_all = [dist]
+		h = self.enc_sampler[idx](ftr_enc0)
+		latents = [h]
 
 		# begin decoder pathway
-		s = self.prior_ftr0.unsqueeze(0)
-		s = s.expand(z.size(0), -1, -1, -1)
-		for cell in self.dec_tower:
-			if isinstance(cell, CombinerDec):
-				if idx > 0:
-					# form prior
-					param = self.dec_sampler[idx - 1](s)
-					mu_p, logsig_p = torch.chunk(param, 2, dim=1)
-					dist = Normal(mu_p, logsig_p)
-					p_all.append(dist)
-
-					# form encoder
-					param = comb_enc[idx - 1](comb_s[idx - 1], s)
-					param = self.enc_sampler[idx](param)
-					mu_q, logsig_q = torch.chunk(param, 2, dim=1)
-					if self.cfg.residual_kl:
-						dist = Normal(
-							mu=mu_q + mu_p,
-							logsig=logsig_q + logsig_p,
-						)
-					else:
-						dist = Normal(
-							mu=mu_q,
-							logsig=logsig_q,
-						)
-					q_all.append(dist)
-					z = dist.sample()
-					latents.append(z)
-				# 'combiner_dec'
-				s = cell(s, self.expand[idx](z))
-				idx += 1
-			else:
-				s = cell(s)
-
-		if self.vanilla:
-			s = self.stem_decoder(z)
+		if not self.vanilla:
+			s = self.prior_ftr0.unsqueeze(0)
+			s = s.expand(h.size(0), -1, -1, -1)
+			for cell in self.dec_tower:
+				if isinstance(cell, CombinerDec):
+					if idx > 0:
+						# form encoder
+						param = comb_enc[idx - 1](comb_s[idx - 1], s)
+						h = self.enc_sampler[idx](param)
+						latents.append(h)
+					# 'combiner_dec'
+					s = cell(s, self.expand[idx](h))
+					idx += 1
+				else:
+					s = cell(s)
+		else:
+			s = self.stem_decoder(h)
 
 		for cell in self.post_process:
 			s = cell(s)
 
-		return self.out(s), latents, q_all, p_all
+		return self.out(s), latents
 
 	@torch.no_grad()
-	def xtract_ftr(self, x, t: float = 0, full: bool = False):
+	def xtract_ftr(self, x, full: bool = False):
 		ftr_enc = collections.defaultdict(list)
 		ftr_dec = collections.defaultdict(list)
-		kws = dict(
-			temp=t,
-			device=x.device,
-			seed=self.cfg.seed,
-		)
 		# enc
 		s = self.stem(x)
 		for cell in self.pre_process:
@@ -115,61 +80,29 @@ class AE(Module):
 
 		idx = 0
 		ftr_enc0 = self.enc0(s)
-		param0 = self.enc_sampler[idx](ftr_enc0)
-		mu_q, logsig_q = torch.chunk(param0, 2, dim=1)
-		dist = Normal(mu_q, logsig_q, **kws)
-		z = dist.sample()
-		q_all = [dist]
-		latents = [z]
-
-		dist = Normal(
-			mu=torch.zeros_like(z),
-			logsig=torch.zeros_like(z),
-			**kws,
-		)
-		p_all = [dist]
+		h = self.enc_sampler[idx](ftr_enc0)
+		latents = [h]
 
 		# dec
-		s = self.prior_ftr0.unsqueeze(0)
-		s = s.expand(z.size(0), -1, -1, -1)
-		for cell in self.dec_tower:
-			if isinstance(cell, CombinerDec):
-				if idx > 0:
-					# form prior
-					param = self.dec_sampler[idx - 1](s)
-					mu_p, logsig_p = torch.chunk(param, 2, dim=1)
-					dist = Normal(mu_p, logsig_p, **kws)
-					p_all.append(dist)
-
-					# form encoder
-					param = comb_enc[idx - 1](comb_s[idx - 1], s)
-					param = self.enc_sampler[idx](param)
-					mu_q, logsig_q = torch.chunk(param, 2, dim=1)
-					if self.cfg.residual_kl:
-						dist = Normal(
-							mu=mu_q + mu_p,
-							logsig=logsig_q + logsig_p,
-							**kws,
-						)
-					else:
-						dist = Normal(
-							mu=mu_q,
-							logsig=logsig_q,
-							**kws,
-						)
-					q_all.append(dist)
-					z = dist.sample()
-					latents.append(z)
-				# 'combiner_dec'
-				s = cell(s, self.expand[idx](z))
-				idx += 1
-			else:
-				s = cell(s)
-				if full and s.size(-1) in self.scales:
-					ftr_dec[s.size(-1)].append(s)
-
-		if self.vanilla:
-			s = self.stem_decoder(z)
+		if not self.vanilla:
+			s = self.prior_ftr0.unsqueeze(0)
+			s = s.expand(h.size(0), -1, -1, -1)
+			for cell in self.dec_tower:
+				if isinstance(cell, CombinerDec):
+					if idx > 0:
+						# form encoder
+						param = comb_enc[idx - 1](comb_s[idx - 1], s)
+						h = self.enc_sampler[idx](param)
+						latents.append(h)
+					# 'combiner_dec'
+					s = cell(s, self.expand[idx](h))
+					idx += 1
+				else:
+					s = cell(s)
+					if full and s.size(-1) in self.scales:
+						ftr_dec[s.size(-1)].append(s)
+		else:
+			s = self.stem_decoder(h)
 			if full and s.size(-1) in self.scales:
 				ftr_dec[s.size(-1)].append(s)
 		for cell in self.post_process:
@@ -181,7 +114,7 @@ class AE(Module):
 			}
 		else:
 			ftr = None
-		return self.out(s), latents, q_all, p_all, ftr
+		return latents, ftr, self.out(s)
 
 	def ftr_sizes(self):
 		n_ftrs_enc = collections.defaultdict(list)
@@ -371,10 +304,11 @@ class AE(Module):
 			self.scales[-1],
 			self.scales[-1],
 		]
-		self.prior_ftr0 = nn.Parameter(
-			data=torch.rand(prior_ftr0_sz),
-			requires_grad=True,
-		)
+		if not self.vanilla:
+			self.prior_ftr0 = nn.Parameter(
+				data=torch.rand(prior_ftr0_sz),
+				requires_grad=True,
+			)
 		return
 
 	def _init_stem(self):
@@ -483,7 +417,6 @@ class AE(Module):
 		)
 		expand = nn.ModuleList()
 		enc_sampler = nn.ModuleList()
-		dec_sampler = nn.ModuleList()
 		for s in range(self.cfg.n_latent_scales):
 			s_inv = self.cfg.n_latent_scales - s - 1
 			kws['spatial_dim'] = self.scales[s_inv]
@@ -501,16 +434,11 @@ class AE(Module):
 					expand.append(nn.Identity())
 				# enc sampler
 				kws['init_scale'] = 0.7
-				enc_sampler.append(Sampler(**kws))
-				# dec sampler
-				if s == 0 and g == 0:
-					continue  # 1st group: we used a fixed standard Normal
-				kws['init_scale'] = 1e-3
-				dec_sampler.append(Sampler(**kws))
+				enc_sampler.append(Squeeze(**kws))
 			mult /= MULT
 		self.enc_sampler = enc_sampler
-		self.dec_sampler = dec_sampler
-		self.expand = expand
+		if not self.vanilla:
+			self.expand = expand
 		return
 
 	def _init_dec(self, mult):
@@ -619,7 +547,7 @@ class AE(Module):
 		return
 
 
-class Sampler(nn.Module):
+class Squeeze(nn.Module):
 	def __init__(
 			self,
 			in_channels: int,
@@ -632,11 +560,11 @@ class Sampler(nn.Module):
 			reduction: int = 4,
 			bias: bool = True,
 	):
-		super(Sampler, self).__init__()
+		super(Squeeze, self).__init__()
 		self.act_fn = get_act_fn(act_fn, False)
 		kws = dict(
 			in_channels=in_channels,
-			out_channels=latent_dim * 2,
+			out_channels=latent_dim,
 			init_scale=init_scale,
 			apply_norm=False,
 			bias=bias,
