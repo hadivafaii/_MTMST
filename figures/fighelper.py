@@ -1,10 +1,93 @@
 from utils.plotting import *
+from base.dataset import ROFLDS
 from analysis.helper import vel2polar
 from matplotlib.gridspec import GridSpec
 
 
-def show_neural_results(df: pd.DataFrame, perf: str = 'perf'):
-	fig, axes = create_figure(2, 2, (9.5, 5), layout='constrained')
+def get_betas(df: pd.DataFrame):
+	betas: List[Union[float, str]] = ['ae']
+	betas += sorted([
+		b for b in df['beta'].unique()
+		if isinstance(b, float)
+	])
+	return betas
+
+
+def get_palette(pal: str = 'muted'):
+	pal = sns.color_palette(pal)
+	pal_model = {
+		'cNVAE': pal[0],
+		'VAE': pal[1],
+		'cNAE': '#6f6f6f',
+		'AE': '#aeaeae',
+	}
+	pal_cat = {
+		'obj1': pal[6],
+		'fixate0': pal[9],
+		'fixate1': pal[0],
+		'fixate2': '#28529d',
+		'transl1': pal[2],
+	}
+	return pal_model, pal_cat
+
+
+def extract_info(fit: str):
+	info = fit.split('_')
+	i = info.index([
+		e for e in info
+		if 'nf-' in e
+	].pop())
+	category = info[i - 1]
+	nf = int(info[i].split('-')[1])
+	beta = info[i + 1].split('-')[1]
+	try:
+		beta = float(beta)
+	except ValueError:
+		beta = str(beta)
+	model = 'VAE' if 'vanilla' in info else 'cNVAE'
+	if beta == 'ae':
+		model = model.replace('V', '')
+	return category, nf, beta, model
+
+
+def prep_rofl(
+		cat: str = 'fixate1',
+		labels: List[str] = None, ):
+	sim_path = pjoin(
+		os.environ['HOME'],
+		'Documents/MTMST/data',
+		f"{cat}_dim-17_n-750k",
+	)
+	ds_vld = ROFLDS(sim_path, 'vld')
+	ds_tst = ROFLDS(sim_path, 'tst')
+	f = ds_vld.f + ds_vld.f_aux
+	# select main ground-truth variables
+	labels = labels if labels else LBL2TEX
+	select_i, select_lbl = zip(*[
+		(i, lbl) for i, lbl
+		in enumerate(f) if
+		lbl in labels
+	])
+	select_i = np.array(select_i)
+	select_lbl = list(select_lbl)
+	g = np.concatenate(
+		[ds_vld.g, ds_vld.g_aux],
+		axis=1)[:, select_i]
+	g_tst = np.concatenate(
+		[ds_tst.g, ds_tst.g_aux],
+		axis=1)[:, select_i]
+	return g, g_tst, select_i, select_lbl
+
+
+def show_neural_results(
+		df: pd.DataFrame,
+		perf: str = 'perf', ):
+	fig, axes = create_figure(
+		nrows=2,
+		ncols=2,
+		figsize=(9.5, 5),
+		layout='constrained',
+	)
 	sns.histplot(
 		data=df,
 		x=perf,
@@ -13,8 +96,14 @@ def show_neural_results(df: pd.DataFrame, perf: str = 'perf'):
 		ax=axes[0, 0],
 	)
 	x = np.mean(df[perf])
-	axes[0, 0].axvline(x, color='r', ls='--', label=f"avg = {x:0.3f}")
-	axes[0, 0].locator_params(axis='x', nbins=12)
+	axes[0, 0].axvline(
+		x=x,
+		ls='--',
+		color='r',
+		label=f"avg = {x:0.3f}",
+	)
+	axes[0, 0].locator_params(
+		axis='x', nbins=12)
 	axes[0, 0].set(xlabel='')
 
 	x = 'log_alpha'
@@ -27,8 +116,10 @@ def show_neural_results(df: pd.DataFrame, perf: str = 'perf'):
 		label=r'$\log \alpha$',
 		ax=axes[0, 1],
 	)
-	axes[0, 1].tick_params(axis='x', rotation=-90, labelsize=9)
-	axes[0, 1].locator_params(axis='x', nbins=len(bins) + 2)
+	axes[0, 1].tick_params(
+		axis='x', rotation=-90, labelsize=9)
+	axes[0, 1].locator_params(
+		axis='x', nbins=len(bins) + 2)
 	axes[0, 1].set(ylabel='', xlabel='')
 
 	x = 'best_lag'
@@ -41,7 +132,8 @@ def show_neural_results(df: pd.DataFrame, perf: str = 'perf'):
 		label='lag used (in fit)',
 		ax=axes[1, 0],
 	)
-	axes[1, 0].locator_params(axis='x', nbins=len(bins) + 2)
+	axes[1, 0].locator_params(
+		axis='x', nbins=len(bins) + 2)
 	axes[1, 0].set(xlabel='')
 
 	x = 'max_perf'
@@ -53,7 +145,8 @@ def show_neural_results(df: pd.DataFrame, perf: str = 'perf'):
 			label="max achievable R",
 			ax=axes[1, 1],
 		)
-		axes[1, 1].locator_params(axis='x', nbins=len(bins) + 2)
+		axes[1, 1].locator_params(
+			axis='x', nbins=len(bins) + 2)
 		axes[1, 1].set(xlabel='', ylabel='')
 
 	for ax in axes.flat:
@@ -406,7 +499,10 @@ def show_opticflow(
 	return fig, axes
 
 
-def show_opticflow_full(v: np.ndarray, **kwargs):
+def show_opticflow_full(
+		v: np.ndarray,
+		display: bool = True,
+		**kwargs, ):
 	defaults = {
 		'cmap_v': 'bwr',
 		'cmap_rho': 'Spectral_r',
@@ -487,7 +583,81 @@ def show_opticflow_full(v: np.ndarray, **kwargs):
 			xticklabels=[],
 			yticklabels=[],
 		)
-	plt.show()
+	if display:
+		plt.show()
+	else:
+		plt.close()
+	return fig, axes
+
+
+def show_opticflow_row(
+		x: np.ndarray,
+		titles: np.ndarray = None,
+		no_ticks: bool = True,
+		display: bool = True,
+		**kwargs, ):
+	defaults = {
+		'figsize': (9, 4),
+		'tick_spacing': 4,
+		'title_fontsize': 11,
+		'layout': 'constrained',
+		'scale': None,
+	}
+	kwargs = setup_kwargs(defaults, kwargs)
+	x = to_np(x)
+	if x.shape[-1] == 2:
+		x = np.transpose(x, (0, 1, -1, 2, 3))
+	d, odd = x.shape[-2] // 2, x.shape[-2] % 2
+	span = range(-d, d + 1) if odd else range(-d, d)
+	ticks, ticklabels = make_ticks(
+		span, kwargs['tick_spacing'])
+	nrows = x.shape[0]
+	ncols = x.shape[1]
+	fig, axes = create_figure(
+		nrows=nrows,
+		ncols=ncols,
+		sharex='all',
+		sharey='all',
+		figsize=kwargs['figsize'],
+		layout=kwargs['layout'],
+	)
+	looper = itertools.product(
+		range(nrows),
+		range(ncols),
+	)
+	for i, j in looper:
+		ax = axes[i, j]
+		try:
+			v = x[i, j]
+		except IndexError:
+			ax.remove()
+			continue
+		if titles is not None:
+			try:
+				ax.set_title(
+					label=titles[i, j],
+					fontsize=kwargs['title_fontsize'],
+				)
+			except IndexError:
+				pass
+		ax.quiver(
+			span, span, v[0], v[1],
+			scale=kwargs['scale'],
+		)
+		ax.set(
+			xticks=ticks,
+			yticks=ticks,
+			xticklabels=ticklabels,
+			yticklabels=ticklabels,
+		)
+		ax.tick_params(labelsize=8)
+	if no_ticks:
+		remove_ticks(axes, False)
+	ax_square(axes)
+	if display:
+		plt.show()
+	else:
+		plt.close()
 	return fig, axes
 
 
@@ -498,3 +668,24 @@ def make_ticks(span, tick_spacing):
 		i % tick_spacing == 0
 	])
 	return ticks, ticklabels
+
+
+CAT2TEX = {
+	'fixate0': '\\fixate{0}',
+	'fixate1': '\\fixate{1}',
+	'obj1': '\\obj{1}',
+}
+
+LBL2TEX = {
+	'fix_x': r'$F_x$',
+	'fix_y': r'$F_y$',
+	'slf_v_x': r'$V_{self, x}$',
+	'slf_v_y': r'$V_{self, y}$',
+	'slf_v_z': r'$V_{self, z}$',
+	'obj0_x': r'$X_{obj}$',
+	'obj0_y': r'$Y_{obj}$',
+	'obj0_z': r'$Z_{obj}$',
+	'obj0_v_x': r'$V_{obj, x}$',
+	'obj0_v_y': r'$V_{obj, y}$',
+	'obj0_v_z': r'$V_{obj, z}$',
+}

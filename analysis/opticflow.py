@@ -1,13 +1,23 @@
 from .helper import *
 
 _CATEGORIES = ['obj', 'transl', 'terrain', 'fixate', 'pursuit']
-_Obj = collections.namedtuple(
-	typename='Object',
-	field_names=[
-		'pos', 'v',			# coordinate system: real
-		'alpha', 'r',		# coordinate system: self
-		'size'],
-)
+
+
+class Obj(object):
+	def __init__(
+			self,
+			v: np.ndarray,
+			pos: np.ndarray,
+			alpha: np.ndarray,
+			r: np.ndarray,
+			size: np.ndarray = None,
+	):
+		super(Obj, self).__init__()
+		self.v = v				# coordinate system: real
+		self.pos = pos			# coordinate system: real
+		self.alpha = alpha		# coordinate system: self
+		self.r = r				# coordinate system: self
+		self.size = size
 
 
 class ROFL(object):
@@ -62,7 +72,42 @@ class ROFL(object):
 		self.alpha_dot = None
 		self.z_env = None
 		self.v_slf = None
+		self.fix = None
 		self.objects = {}
+
+	def setattrs(
+			self,
+			attrs_slf: Dict[str, np.ndarray],
+			attrs_obj: Dict[int, Dict[str, np.ndarray]], ):
+
+		_ = self.compute_coords(attrs_slf.get('fix'))
+		self.v_slf = attrs_slf.get('v_slf')
+
+		for obj_i, o in attrs_obj.items():
+			alpha = o.get('alpha')
+			if alpha is None:
+				continue
+			theta, phi = radself2polar(
+				a=alpha[:, 0],
+				b=alpha[:, 1],
+			)
+			u = [np.ones(self.n), theta, phi]
+			u = polar2cart(np.stack(u, axis=1))
+			u = self.apply_rot(u, transpose=False)
+
+			if 'z' in o:
+				z = o['z']
+			else:
+				z = self.sample_z()
+			pos = _replace_z(u, z)
+
+			self.objects[obj_i] = Obj(
+				v=o['v_obj'],
+				pos=pos,
+				alpha=alpha,
+				r=cart2polar(self.apply_rot(pos)),
+			)
+		return
 
 	def groundtruth_factors(self):
 		factors = {
@@ -172,7 +217,8 @@ class ROFL(object):
 		return accepted
 
 	def compute_flow(self):
-		self.v_slf = self.sample_vel(*self.vlim_slf)
+		if self.v_slf is None:
+			self.v_slf = self.sample_vel(*self.vlim_slf)
 		v_tr_obj, x_env = self.add_objects()
 		v_tr = self._compute_v_tr(v_tr_obj)
 		v_rot = self._compute_v_rot(x_env)
@@ -191,29 +237,30 @@ class ROFL(object):
 		"""
 		if self.n_obj == 0:
 			return 0, self.x
-		obj_masks = {}
-		for obj_i in range(self.n_obj):
-			if self.category == 'pursuit' and obj_i == 0:
-				pos = _replace_z(self.fix, self.sample_z())
-				alpha = np.zeros((self.n, 2))
-			else:
-				pos, alpha = self.sample_pos()
-			mask = self.compute_obj_mask(pos)
-			kws = dict(
-				pos=pos,
-				alpha=alpha,
-				size=mask.mean(-1).mean(-1),
-				v=self.sample_vel(*self.vlim_obj),
-				r=cart2polar(self.apply_rot(pos)),
-			)
-			self.objects[obj_i] = _Obj(**kws)
-			obj_masks[obj_i] = mask
+		if not len(self.objects):  # sample, if not provided
+			for obj_i in range(self.n_obj):
+				if self.category == 'pursuit' and obj_i == 0:
+					pos = _replace_z(self.fix, self.sample_z())
+					alpha = np.zeros((self.n, 2))
+				else:
+					pos, alpha = self.sample_pos()
+				self.objects[obj_i] = Obj(
+					pos=pos,
+					alpha=alpha,
+					v=self.sample_vel(*self.vlim_obj),
+					r=cart2polar(self.apply_rot(pos)),
+				)
+		# get masks and compute sizes
+		obj_masks = {
+			obj_i: self.compute_obj_mask(o.pos)
+			for obj_i, o in self.objects.items()
+		}
+		for obj_i, o in self.objects.items():
+			o.size = obj_masks[obj_i].mean(-1).mean(-1)
 		v_tr, x_env = self._compute_obj_v(obj_masks)
 		return v_tr, x_env
 
 	def compute_coords(self, fix: np.ndarray = None):
-		if fix is None:
-			fix = self.sample_fix()
 		self._compute_fix(fix)
 		self._compute_rot()
 		self._compute_xyz()
@@ -395,7 +442,9 @@ class ROFL(object):
 		v_rot = np.einsum(v_rot, mat, x)
 		return v_rot
 
-	def _compute_fix(self, fix: np.ndarray):
+	def _compute_fix(self, fix: np.ndarray = None):
+		if fix is None:
+			fix = self.sample_fix()
 		fix = _check_input(fix, 0)
 		assert fix.shape[1] == 2, "fix = (X0, Y0)"
 		upper = 1 / np.tan(np.deg2rad(self.fov))
@@ -461,350 +510,7 @@ class ROFL(object):
 		return
 
 
-class SimulationMultOLD(object):
-	def __init__(
-			self,
-			fov: float,
-			n_fix: int,
-			n_slf: int,
-			n_obj: int,
-			seed: int = 0,
-			verbose: bool = False,
-	):
-		super(SimulationMultOLD, self).__init__()
-		self.fov = fov
-		self.n_fix = n_fix
-		self.n_slf = n_slf
-		self.n_obj = n_obj
-		self.verbose = verbose
-		self.rng = get_rng(seed)
-		self.fix = None
-		self.vel_slf = None
-		self.vel_obj = None
-		self.pos_obj = None
-		self.acc = None
-		self._idxs()
-
-	def uniform(
-			self,
-			vel_slf: Tuple[float, float] = (0.01, 1),
-			vel_obj: Tuple[float, float] = (0.01, 2),
-	):
-		self.uniform_fix(self.n_fix)
-		self.vel_slf = self.uniform_vel(
-			self.n_slf, vel_slf[0], vel_slf[1])
-		self.vel_obj = self.uniform_vel(
-			self.n_obj, vel_obj[0], vel_obj[1])
-		self.uniform_pos(self.n_obj)
-		self._accept()
-		return self
-
-	def uniform_fix(self, n: int):
-		fix = np_nans((n, 2))
-
-		bound = 1 / np.tan(np.deg2rad(self.fov))
-		kws = dict(low=-bound, high=bound)
-
-		idx = 0
-		while True:
-			x = self.rng.uniform(**kws)
-			y = self.rng.uniform(**kws)
-			if abs(x) + abs(y) < 1:
-				fix[idx] = x, y
-				idx += 1
-			if idx == n:
-				break
-		assert not np.isnan(fix).sum()
-		self.fix = fix
-		return
-
-	def uniform_sphere(self, n: int):
-		points = self.rng.normal(size=(3, n))
-		points /= sp_lin.norm(
-			a=points,
-			axis=0,
-			keepdims=True,
-		)
-		return points
-
-	def uniform_vel(
-			self,
-			n: int,
-			vmin: float,
-			vmax: float, ):
-		v = self.uniform_sphere(n)
-		v *= self.rng.uniform(
-			low=vmin,
-			high=vmax,
-			size=(1, n),
-		)
-		return v
-
-	def uniform_pos(
-			self,
-			n: int,
-			x: Tuple[float, float] = (-1, 1),
-			y: Tuple[float, float] = (-1, 1),
-			z: Tuple[float, float] = (0.5, 1), ):
-		pos = [
-			self.rng.uniform(
-				low=e[0],
-				high=e[1],
-				size=n,
-			) for e in [x, y, z]
-		]
-		self.pos_obj = np.stack(pos, axis=0)
-		return
-
-	def _accept(self, fov_ratio: float = 0.8, z: float = 1):
-		fix = np.concatenate([
-			self.fix,
-			z * np.ones((len(self.fix), 1)),
-		], axis=1)
-		d = sp_dist.cdist(
-			XA=fix,
-			XB=self.pos_obj.T,
-			metric='cosine',
-		)
-		theta = np.rad2deg(np.arccos(1 - d))
-		acc = theta < fov_ratio * self.fov
-		acc = _expand(acc, self.vel_slf.shape[1], 1)
-		self.acc = acc.ravel()
-		if self.verbose:
-			msg = f"{100 * self.acc.sum() / len(self.acc):0.1f} % of total"
-			msg += f" simulations accepted (using fov_ratio = {fov_ratio})"
-			print(msg)
-		return
-
-	def _idxs(self):
-		self.idxs = {
-			i: (a, b, c) for i, (a, b, c) in
-			enumerate(itertools.product(
-				range(self.n_fix),
-				range(self.n_slf),
-				range(self.n_obj),
-			))
-		}
-		return
-
-
-class OpticFlowVecOLD(object):
-	def __init__(
-			self,
-			fov: float = 45,
-			res: float = 0.1,
-			obj_r: float = 0.2,
-			z_bg: float = 1,
-	):
-		super(OpticFlowVecOLD, self).__init__()
-		assert z_bg > 0
-		self.fov = fov
-		self.res = res
-		self.z_bg = z_bg
-		self.obj_r = obj_r
-		self._compute_span()
-		self._create_ticks()
-		self._compute_polar_coords()
-
-	def compute_flow(
-			self,
-			vel: np.ndarray,
-			obj_pos: np.ndarray,
-			obj_vel: np.ndarray, ):
-		self._set_vals(vel, obj_pos, obj_vel)
-		# add object
-		v_transl_obj, x_obj = self._add_obj()
-		x = _expand(self.x, self.obj_pos.shape[1], -1)
-		x[~np.isnan(x_obj)] = x_obj[~np.isnan(x_obj)]
-		# apply self movement
-		v_rot = self._compute_v_rot(x=x)
-		v_transl = self._compute_v_tr()
-		v_transl = _expand(v_transl, x.shape[-1], -1)
-		# expand/merge together
-		kws = dict(reps=self.vel.shape[1], axis=-2)
-		x = _expand(x, **kws)
-		nans = _expand(np.isnan(x_obj), **kws)
-		v_transl_obj = _expand(v_transl_obj, **kws)
-		v_transl[~nans] += v_transl_obj[~nans]
-		# compute retinal velocity
-		alpha_dot = self._compute_alpha_dot(
-			v=v_transl - v_rot, x=x, axis=3)
-		return alpha_dot
-
-	def compute_coords(self, fix: np.ndarray = (0, 0)):
-		self._compute_fix(fix)
-		self._compute_rot()
-		self._compute_xyz()
-		return self
-
-	def _set_vals(self, vel, obj_pos, obj_vel):
-		self.obj_pos, self.obj_vel = _check_obj(
-			obj_pos, obj_vel)
-		self.vel = _check_input(vel, -1)
-		return
-
-	def _add_obj(
-			self,
-			pos: np.ndarray = None,
-			vel: np.ndarray = None, ):
-		if pos is None:
-			pos = self.obj_pos
-		if vel is None:
-			vel = self.obj_vel
-		v_transl = self._compute_v_tr(vel)
-
-		shape = (1,) * self.x.ndim
-		shape += (pos.shape[1],)
-		shape = np.array(shape)
-		# find obj X (reality)
-		x = np.expand_dims(self.x, -1)
-		x = np.repeat(x, shape[-1], -1)
-		x *= pos[-1].reshape(shape)
-		x_real = 'aij, amnjc -> amnic'
-		x_real = np.einsum(x_real, self.R, x)
-		# apply mask
-		shape[-2] = 2
-		mask = x_real[..., :2, :] - pos[:2].reshape(shape)
-		mask = sp_lin.norm(mask, axis=-2) < self.obj_r
-		mask = _expand(mask, 3, -2)
-		v_transl[~mask] = 0
-		x[~mask] = np.nan
-		return v_transl, x
-
-	def _compute_alpha_dot(
-			self,
-			v: np.ndarray,
-			x: np.ndarray = None,
-			axis: int = 3, ):
-		if x is None:
-			x = self.x
-		delta = v.ndim - x.ndim
-		if delta > 0:
-			for n in v.shape[-delta:]:
-				x = _expand(x, n, -1)
-		alpha_dot = []
-		for i in [0, 1]:
-			a = (
-				v.take(i, axis) * x.take(2, axis) -
-				v.take(2, axis) * x.take(i, axis)
-			)
-			a /= sp_lin.norm(
-				x.take([i, 2], axis),
-				axis=axis,
-			) ** 2
-			a = np.expand_dims(a, axis)
-			alpha_dot.append(a)
-		alpha_dot = np.concatenate(alpha_dot, axis)
-		return alpha_dot
-
-	def _compute_v_tr(self, v: np.ndarray = None):
-		if v is None:
-			v = -self.vel
-		v_tr = np.dot(np.transpose(self.R, (0, 2, 1)), v)
-		v_tr = np.repeat(np.repeat(np.expand_dims(np.expand_dims(
-			v_tr, 1), 1), self.dim, 1), self.dim, 2)
-		return v_tr
-
-	def _compute_v_rot(
-			self,
-			v: np.ndarray = None,
-			x: np.ndarray = None, ):
-		if v is None:
-			v = -self.vel
-		if x is None:
-			x = self.x
-		fix_norm = sp_lin.norm(
-			self.fix,
-			axis=-1,
-			keepdims=True,
-		) ** 2
-		# Normal velocity
-		mag = (self.fix @ v) / fix_norm
-		v_normal = 'ab, ai -> aib'
-		v_normal = np.einsum(v_normal, mag, self.fix)
-		v_normal = np.expand_dims(v, 0) - v_normal
-		# Rotational velocity
-		omega = 'aij, ajb -> aib'
-		omega = np.einsum(omega, skew(self.fix, 1), v_normal)
-		omega /= np.expand_dims(fix_norm, axis=-1)
-		omega = skew(omega, 1)
-		mat = 'ani, anmb, amj -> aijb'
-		mat = np.einsum(mat, self.R, omega, self.R)
-		if x.ndim - mat.ndim == 0:
-			v_rot = 'aijb, axyj -> axyib'
-		elif x.ndim - mat.ndim == 1:
-			v_rot = 'aijb, axyjc -> axyibc'
-		else:
-			raise RuntimeError
-		v_rot = np.einsum(v_rot, mat, x)
-		return v_rot
-
-	def _compute_xyz(self):
-		gamma = 'aij, mnj -> amni'
-		gamma = np.einsum(gamma, self.R, self.tan)
-		shape = (1, self.dim, self.dim, 1)
-		self.x = self.z_bg * np.concatenate([
-			self.tan[..., 0].reshape(shape),
-			self.tan[..., 1].reshape(shape),
-			np.ones(shape),
-		], axis=-1) / gamma[..., [-1]]
-		return
-
-	def _compute_rot(self):
-		r = cart2polar(self.fix)
-		u0 = np.concatenate([
-			- np.sin(r[:, [2]]),
-			np.cos(r[:, [2]]),
-			np.zeros((len(r), 1)),
-		], axis=-1)
-		self.R = Rotation.from_rotvec(
-			r[:, [1]] * np.array(u0),
-		).as_matrix()
-		return
-
-	def _compute_fix(self, fix: np.ndarray):
-		fix = _check_input(fix, 0)
-		assert fix.shape[1] == 2, "fix = (X0, Y0)"
-		upper = 1 / np.tan(np.deg2rad(self.fov))
-		passed = np.abs(fix).sum(1) < upper
-		fix_z = self.z_bg * np.ones((passed.sum(), 1))
-		self.fix = np.concatenate([
-			fix[passed],
-			fix_z,
-		], axis=-1)
-		return
-
-	def _compute_polar_coords(self):
-		a, b = np.meshgrid(self.span, self.span)
-		self.alpha = np.concatenate([
-			np.expand_dims(a, -1),
-			np.expand_dims(b, -1),
-		], axis=-1)
-		self.tan = np.concatenate([
-			np.tan(self.alpha),
-			np.ones((self.dim,) * 2 + (1,)),
-		], axis=-1)
-		return
-
-	def _create_ticks(self, tick_spacing: int = None):
-		if tick_spacing is None:
-			tick_spacing = 15 // self.res  # self.fov // 3
-		self.ticks, self.ticklabels = zip(*[
-			(i, str(int(np.round(np.rad2deg(x))))) for i, x
-			in enumerate(self.span) if i % tick_spacing == 0
-		])
-		return
-
-	def _compute_span(self):
-		dim = self.fov / self.res
-		assert dim.is_integer()
-		self.dim = 2 * int(dim) + 1
-		self.span = np.deg2rad(np.linspace(
-			-self.fov, self.fov, self.dim))
-		return
-
-
-class HyperFlow(Obj):
+class HyperFlow(object):
 	def __init__(
 			self,
 			params: np.ndarray,
@@ -814,9 +520,8 @@ class HyperFlow(Obj):
 			dim: int = 17,
 			sres: float = 1,
 			tres: int = 25,
-			**kwargs,
 	):
-		super(HyperFlow, self).__init__(**kwargs)
+		super(HyperFlow, self).__init__()
 		assert params.shape[1] == 6
 		assert center.shape[1] == 2
 		self.params = params
@@ -957,9 +662,9 @@ class HyperFlow(Obj):
 		return stim
 
 
-class VelField(Obj):
-	def __init__(self, x, tres: int = 25, **kwargs):
-		super(VelField, self).__init__(**kwargs)
+class VelField(object):
+	def __init__(self, x, tres: int = 25):
+		super(VelField, self).__init__()
 		self._init(x)
 		self.tres = tres
 		self.compute_svd()
@@ -976,6 +681,11 @@ class VelField(Obj):
 		self.u = None
 		self.s = None
 		self.v = None
+		return
+
+	def _setattrs(self, **attrs):
+		for k, v in attrs.items():
+			setattr(self, k, v)
 		return
 
 	def get_kers(self, idx: int = 0):
@@ -1028,7 +738,7 @@ class VelField(Obj):
 			's': s,
 			'v': v,
 		}
-		self.setattrs(**output)
+		self._setattrs(**output)
 		return
 
 	def show(
@@ -1178,7 +888,7 @@ def compute_alpha_dot(
 		x: np.ndarray,
 		axis: int = 3, ):
 	"""
-	# both x and v are measured
+	# both v and x are measured
 	# in self coordinate system
 	"""
 	delta = v.ndim - x.ndim

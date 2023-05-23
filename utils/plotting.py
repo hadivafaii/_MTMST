@@ -8,19 +8,32 @@ from matplotlib.backends.backend_pdf import FigureCanvasPdf, PdfPages
 from matplotlib.colors import to_rgb, rgb2hex, Colormap, LinearSegmentedColormap
 
 
-def barplot_add_vals(axes, fontsize: float = 10):
+def barplot_add_vals(
+		axes,
+		frac_x: float = 0.5,
+		frac_y: float = 0.035,
+		fontsize: float = 10,
+		rotation: float = 0,
+		min_h: float = 0.05,
+		decimals: int = 2,
+		ha: str = 'center',
+		color: str = 'k', ):
 	ymax = axes.get_ybound()[1]
 
 	def _single(_ax):
 		for p in _ax.patches:
 			h = p.get_height()
 			w = p.get_width()
+			if h < min_h:
+				continue
 			_ax.text(
-				x=p.get_x() + 0.5 * w,
-				y=p.get_y() + h - 0.035 * ymax,
-				s=f'{h:.2f}',
+				x=p.get_x() + frac_x * w,
+				y=p.get_y() + h - frac_y * ymax,
+				s=np.round(h, decimals),
 				fontsize=fontsize,
-				ha="center",
+				rotation=rotation,
+				color=color,
+				ha=ha,
 			)
 	if isinstance(axes, np.ndarray):
 		for idx, ax in np.ndenumerate(axes):

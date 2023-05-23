@@ -107,7 +107,7 @@ def compute_dci(w: np.array):
 	return d, c
 
 
-class LinearModel(Obj):
+class LinearModel(object):
 	def __init__(
 			self,
 			category: str,
@@ -118,9 +118,9 @@ class LinearModel(Obj):
 			alphas: Iterable[float] = None,
 			n_folds: int = 5,
 			seed: int = 0,
-			**kwargs,
+			verbose: bool = False,
 	):
-		super(LinearModel, self).__init__(**kwargs)
+		super(LinearModel, self).__init__()
 		self.fn = getattr(sk_linear, category)
 		self.defaults = get_default_params(self.fn)
 		if 'random_state' in self.defaults:
@@ -147,7 +147,7 @@ class LinearModel(Obj):
 		self.preds = {}
 		self._init_df()
 
-		if self.verbose:
+		if verbose:
 			msg = f"Category: '{self.category}', "
 			msg += f"default params:\n{self.defaults}"
 			print(msg)

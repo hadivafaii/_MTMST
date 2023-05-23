@@ -287,18 +287,6 @@ def polar2cart(r: np.ndarray):
 	return out
 
 
-class Obj(object):
-	def __init__(self, verbose: bool = False):
-		super(Obj, self).__init__()
-		self.verbose = verbose
-		self.datetime = now(True)
-
-	def setattrs(self, **attrs):
-		for k, v in attrs.items():
-			setattr(self, k, v)
-		return
-
-
 def _check_input(e: np.ndarray):
 	if not isinstance(e, np.ndarray):
 		e = np.array(e)
