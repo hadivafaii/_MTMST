@@ -85,7 +85,7 @@ def table_pvals(
 		betas: List[float] = None, ):
 	if betas is None:
 		betas = get_betas(df)
-	pvals = collections.defaultdict(list)
+	df_pvals = collections.defaultdict(list)
 	for b in betas:
 		_df = df.loc[
 			(df['category'] == 'fixate1') &
@@ -100,29 +100,32 @@ def table_pvals(
 			a2 = _df.loc[_df['model'] == m2, test].values
 			good = np.isfinite(a1) & np.isfinite(a2)
 			t = sp_stats.ttest_rel(a1[good], a2[good])
-			pvals['m1'].append(m1)
-			pvals['m2'].append(m2)
-			pvals['beta'].append(b)
-			pvals['test'].append(test)
-			pvals['p'].append(t.pvalue)
-			pvals['statistic'].append(t.statistic)
-	pvals = pd.DataFrame(pvals)
+			d = (a1 - a2)[good]
+			d = d.mean() / d.std(ddof=1)
+			df_pvals['m1'].append(m1)
+			df_pvals['m2'].append(m2)
+			df_pvals['beta'].append(b)
+			df_pvals['test'].append(test)
+			df_pvals['p'].append(t.pvalue)
+			df_pvals['statistic'].append(t.statistic)
+			df_pvals['cohens_d'].append(d)
+	df_pvals = pd.DataFrame(df_pvals)
 
 	# FDR correction
 	from statsmodels.stats.multitest import multipletests
 	reject, pvalsc, _, alphac_bonf = multipletests(
-		pvals['p'].values, method='fdr_bh')
-	pvals['p_corrected'] = pvalsc
-	pvals['reject'] = reject
+		df_pvals['p'].values, method='fdr_bh')
+	df_pvals['p_corrected'] = pvalsc
+	df_pvals['reject'] = reject
 
 	table = []
 	for b in betas:
-		_df1 = pvals.loc[pvals['beta'] == b]
+		_df1 = df_pvals.loc[df_pvals['beta'] == b]
 		row = [str(b)]
 		for test in ['perf', 'a']:
 			_df2 = _df1.loc[_df1['test'] == test]
 			row.append(' & '.join([
-				f"{_df2['statistic'].item():0.2g}",
+				f"{_df2['cohens_d'].item():0.2g}",
 				f"{_df2['p_corrected'].item():1.1g}",
 				'\\cmark' if _df2['reject'].item() else '\\xmark',
 			]))
@@ -130,4 +133,4 @@ def table_pvals(
 		table.append(f"{row}\\\\\n")
 	table = ''.join(table)
 
-	return table, alphac_bonf
+	return table, df_pvals, alphac_bonf
