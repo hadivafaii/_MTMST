@@ -58,34 +58,48 @@ def prep_rofl(
 		'Documents/MTMST/data',
 		f"{cat}_dim-17_n-750k",
 	)
-	ds_vld = ROFLDS(sim_path, 'vld')
-	ds_tst = ROFLDS(sim_path, 'tst')
-	f = ds_vld.f + ds_vld.f_aux
+	ds = {
+		k: ROFLDS(sim_path, k) for
+		k in ['trn', 'vld', 'tst']
+	}
 	# select main ground-truth variables
+	f = ds['trn'].f + ds['trn'].f_aux
 	labels = labels if labels else LBL2TEX
 	select_i, select_lbl = zip(*[
 		(i, lbl) for i, lbl
 		in enumerate(f) if
 		lbl in labels
 	])
-	select_i = np.array(select_i)
+	perm = [
+		select_lbl.index(lbl) for
+		i, lbl in enumerate(labels)
+		if lbl in select_lbl
+	]
+	select_i = np.array(select_i)[perm]
+	select_lbl = np.array(select_lbl)[perm]
 	select_lbl = list(select_lbl)
-	g = np.concatenate(
-		[ds_vld.g, ds_vld.g_aux],
-		axis=1)[:, select_i]
-	g_tst = np.concatenate(
-		[ds_tst.g, ds_tst.g_aux],
-		axis=1)[:, select_i]
-	return g, g_tst, select_i, select_lbl
+	g = {
+		k: np.concatenate(
+			[v.g, v.g_aux],
+			axis=1)[:, select_i]
+		for k, v in ds.items()
+	}
+	return g, select_lbl
 
 
 def show_neural_results(
 		df: pd.DataFrame,
-		perf: str = 'perf', ):
+		perf: str = 'perf',
+		display: bool = True,
+		**kwargs, ):
+	defaults = dict(
+		figsize=(8, 4),
+	)
+	kwargs = setup_kwargs(defaults, kwargs)
 	fig, axes = create_figure(
 		nrows=2,
 		ncols=2,
-		figsize=(9.5, 5),
+		figsize=kwargs['figsize'],
 		layout='constrained',
 	)
 	sns.histplot(
@@ -152,8 +166,10 @@ def show_neural_results(
 	for ax in axes.flat:
 		ax.legend()
 
-	plt.show()
-
+	if display:
+		plt.show()
+	else:
+		plt.close()
 	return fig, axes
 
 
@@ -215,9 +231,9 @@ def plot_heatmap(
 		display: bool = True,
 		**kwargs, ):
 	defaults = dict(
-		figsize=(15, 12),
-		tick_labelsize_x=14,
-		tick_labelsize_y=14,
+		figsize=(10, 8),
+		tick_labelsize_x=12,
+		tick_labelsize_y=12,
 		title_fontsize=13,
 		title_y=1,
 		vmin=-1,
@@ -374,13 +390,21 @@ def plot_latents_hist(
 def plot_opticflow_hist(
 		x: np.ndarray,
 		val: float = 1.0,
-		display: bool = True, ):
+		display: bool = True,
+		**kwargs, ):
+	defaults = dict(
+		figsize=(9.5, 4.5),
+		layout='constrained',
+		leg_fontsize=12,
+		leg_loc='best',
+	)
+	kwargs = setup_kwargs(defaults, kwargs)
 	rho, theta = vel2polar(x)
 	fig, axes = create_figure(
 		nrows=2,
 		ncols=3,
-		figsize=(12, 6),
-		layout='constrained',
+		figsize=kwargs['figsize'],
+		layout=kwargs['layout'],
 	)
 	sns.histplot(
 		rho.ravel(),
@@ -420,7 +444,10 @@ def plot_opticflow_hist(
 	)
 	for ax in axes.flat:
 		ax.set_ylabel('')
-		ax.legend(fontsize=15, loc='upper right')
+		ax.legend(
+			fontsize=kwargs['leg_fontsize'],
+			loc=kwargs['leg_loc'],
+		)
 	for ax in axes[0, :2].flat:
 		ax.axvline(val, color='r', ls='--', lw=1.2)
 	axes[0, 2].axvline(np.log(val), color='r', ls='--', lw=1.2)
@@ -444,7 +471,7 @@ def show_opticflow(
 		display: bool = True,
 		**kwargs, ):
 	defaults = {
-		'figsize': (9, 9),
+		'figsize': (7, 7),
 		'tick_spacing': 4,
 		'title_fontsize': 11,
 		'layout': 'constrained',
@@ -465,6 +492,7 @@ def show_opticflow(
 		sharey='all',
 		figsize=kwargs['figsize'],
 		layout=kwargs['layout'],
+		reshape=True,
 	)
 	for i, ax in enumerate(axes.flat):
 		try:
@@ -501,12 +529,15 @@ def show_opticflow(
 
 def show_opticflow_full(
 		v: np.ndarray,
+		cbar: bool = False,
 		display: bool = True,
 		**kwargs, ):
 	defaults = {
 		'cmap_v': 'bwr',
 		'cmap_rho': 'Spectral_r',
-		'figsize': (10, 9),
+		'figsize': (7 if cbar else 5.25, 6.7),
+		'title_fontsize': 9,
+		'cbar_ticksize': 9,
 		'tick_spacing': 4,
 		'scale': None,
 	}
@@ -530,34 +561,43 @@ def show_opticflow_full(
 	)
 	gs = GridSpec(
 		nrows=5,
-		ncols=5,
-		width_ratios=[1, 1, 0.01, 1, 1],
+		ncols=6 if cbar else 4,
+		width_ratios=[1, 1, 0.1, 1, 0.1, 1] if cbar else None,
 	)
 	fig = plt.figure(figsize=kwargs['figsize'])
 	axes = []
 
 	ax1 = fig.add_subplot(gs[0, 0])
-	im = ax1.imshow(v[0], **kws_v)
-	plt.colorbar(im, ax=ax1)
-	ax1.set_title(r'$v_x$', y=1.02, fontsize=13)
+	ax1.imshow(v[0], **kws_v)
+	title = r'$v_x \in $' + f"({kws_v['vmin']:0.1f},{kws_v['vmax']:0.1f})"
+	ax1.set_title(label=title, y=1.02, fontsize=kwargs['title_fontsize'])
 	axes.append(ax1)
 
 	ax2 = fig.add_subplot(gs[0, 1])
 	im = ax2.imshow(v[1], **kws_v)
-	plt.colorbar(im, ax=ax2)
-	ax2.set_title(r'$v_y$', y=1.02, fontsize=13)
+	if cbar:
+		cb = plt.colorbar(im, ax=ax2)
+		cb.ax.tick_params(labelsize=kwargs['cbar_ticksize'])
+	title = r'$v_y \in $' + f"({kws_v['vmin']:0.1f},{kws_v['vmax']:0.1f})"
+	ax2.set_title(label=title, y=1.02, fontsize=kwargs['title_fontsize'])
 	axes.append(ax2)
 
-	ax3 = fig.add_subplot(gs[0, 3])
+	ax3 = fig.add_subplot(gs[0, 3 if cbar else 2])
 	im = ax3.imshow(rho, cmap=kwargs['cmap_rho'])
-	plt.colorbar(im, ax=ax3)
-	ax3.set_title(r'$\rho$', y=1.02, fontsize=13)
+	if cbar:
+		cb = plt.colorbar(im, ax=ax3)
+		cb.ax.tick_params(labelsize=kwargs['cbar_ticksize'])
+	title = r'$\rho \in $' + f"[{np.min(rho):0.1f},{np.max(rho):0.1f}]"
+	ax3.set_title(label=title, y=1.02, fontsize=kwargs['title_fontsize'])
 	axes.append(ax3)
 
-	ax4 = fig.add_subplot(gs[0, 4])
+	ax4 = fig.add_subplot(gs[0, 5 if cbar else 3])
 	im = ax4.imshow(phi, cmap='hsv', vmin=0, vmax=2*np.pi)
-	plt.colorbar(im, ax=ax4)
-	ax4.set_title(r'$\phi$', y=1.02, fontsize=12)
+	if cbar:
+		cb = plt.colorbar(im, ax=ax4)
+		cb.ax.tick_params(labelsize=kwargs['cbar_ticksize'])
+	title = r'$\phi \in \left[0, 2\pi\right)$'
+	ax4.set_title(label=title, y=1.02, fontsize=kwargs['title_fontsize'])
 	axes.append(ax4)
 
 	ax = fig.add_subplot(gs[1:, :])
@@ -661,15 +701,6 @@ def show_opticflow_row(
 	return fig, axes
 
 
-def make_ticks(span, tick_spacing):
-	ticks, ticklabels = zip(*[
-		(x, (str(x))) for i, x
-		in enumerate(span) if
-		i % tick_spacing == 0
-	])
-	return ticks, ticklabels
-
-
 CAT2TEX = {
 	'fixate0': '\\fixate{0}',
 	'fixate1': '\\fixate{1}',
@@ -685,6 +716,22 @@ LBL2TEX = {
 	'obj0_x': r'$X_{obj}$',
 	'obj0_y': r'$Y_{obj}$',
 	'obj0_z': r'$Z_{obj}$',
+	'obj0_v_x': r'$V_{obj, x}$',
+	'obj0_v_y': r'$V_{obj, y}$',
+	'obj0_v_z': r'$V_{obj, z}$',
+}
+
+
+# TODO: later remove above and keep below
+LBL2TEX_main = {
+	'fix_x': r'$F_x$',
+	'fix_y': r'$F_y$',
+	'slf_v_x': r'$V_{self, x}$',
+	'slf_v_y': r'$V_{self, y}$',
+	'slf_v_z': r'$V_{self, z}$',
+	'obj0_alpha_x': r'$X_{obj}$',
+	'obj0_alpha_y': r'$Y_{obj}$',
+	'obj0_size': r'$S_{obj}$',
 	'obj0_v_x': r'$V_{obj, x}$',
 	'obj0_v_y': r'$V_{obj, y}$',
 	'obj0_v_z': r'$V_{obj, z}$',

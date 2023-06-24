@@ -28,8 +28,8 @@ class ROFL(object):
 			n_obj: int = 1,
 			dim: int = 65,
 			fov: float = 45.0,
-			obj_r: float = 0.2,
-			obj_bound: float = 0.97,
+			obj_r: float = 0.25,
+			obj_bound: float = 1.0,
 			obj_zlim: Tuple[float, float] = (0.5, 1.0),
 			vlim_obj: Tuple[float, float] = (0.01, 5.0),
 			vlim_slf: Tuple[float, float] = (0.01, 5.0),
@@ -77,12 +77,14 @@ class ROFL(object):
 
 	def setattrs(
 			self,
-			attrs_slf: Dict[str, np.ndarray],
-			attrs_obj: Dict[int, Dict[str, np.ndarray]], ):
+			attrs_slf: Dict[str, np.ndarray] = None,
+			attrs_obj: Dict[int, Dict[str, np.ndarray]] = None, ):
 
-		_ = self.compute_coords(attrs_slf.get('fix'))
-		self.v_slf = attrs_slf.get('v_slf')
-
+		if attrs_slf is not None:
+			_ = self.compute_coords(attrs_slf.get('fix'))
+			self.v_slf = attrs_slf.get('v_slf')
+		if attrs_obj is None:
+			return
 		for obj_i, o in attrs_obj.items():
 			alpha = o.get('alpha')
 			if alpha is None:
@@ -133,7 +135,7 @@ class ROFL(object):
 				**factors,
 				f'obj{i}_alpha_x': obj.alpha[:, 0],
 				f'obj{i}_alpha_y': obj.alpha[:, 1],
-				f'obj{i}_distance': obj.r[:, 0],
+				f'obj{i}_z': obj.pos[:, 2],
 			}
 			delta_x = obj.pos - self.fix
 			factors_aux = {
@@ -144,7 +146,7 @@ class ROFL(object):
 				f'obj{i}_phi': obj.r[:, 2],
 				f'obj{i}_x': obj.pos[:, 0],
 				f'obj{i}_y': obj.pos[:, 1],
-				f'obj{i}_z': obj.pos[:, 2],
+				f'obj{i}_distance': obj.r[:, 0],
 				f'obj{i}_dx': delta_x[:, 0],
 				f'obj{i}_dy': delta_x[:, 1],
 				f'obj{i}_dz': delta_x[:, 2],
@@ -446,11 +448,17 @@ class ROFL(object):
 		if fix is None:
 			fix = self.sample_fix()
 		fix = _check_input(fix, 0)
-		assert fix.shape[1] == 2, "fix = (X0, Y0)"
+		# fix = (X0, Y0):
+		if fix.shape[1] == 3:
+			fix = fix[:, :2]
+		elif fix.shape[1] == 2:
+			pass
+		else:
+			raise RuntimeError(fix.shape)
 		upper = 1 / np.tan(np.deg2rad(self.fov))
 		okay = np.abs(fix).sum(1) < upper
-		fix_z = self.z_bg * np.ones(
-			(okay.sum(), 1))
+		self.n = int(okay.sum())
+		fix_z = self.z_bg * np.ones((self.n, 1))
 		self.fix = np.concatenate([
 			fix[okay],
 			fix_z,

@@ -37,7 +37,35 @@ from tqdm import tqdm
 from typing import *
 
 
-def true(s: str):
+def shift_rescale(
+	x: np.ndarray,
+	loc: np.ndarray,
+	scale: np.ndarray,
+	fwd: bool = True, ):
+	assert x.ndim == loc.ndim == scale.ndim
+	return (x - loc) / scale if fwd else x * scale + loc
+
+
+def interp(
+	xi: Union[np.ndarray, torch.Tensor],
+	xf: Union[np.ndarray, torch.Tensor],
+	steps: int = 16, ):
+	assert steps >= 2
+	assert xi.shape == xf.shape
+	shape = (steps, *xi.shape)
+	if isinstance(xi, np.ndarray):
+		x = np.empty(shape)
+	elif isinstance(xi, torch.Tensor):
+		x = torch.empty(shape)
+	else:
+		raise RuntimeError(type(xi))
+	d = (xf - xi) / (steps - 1)
+	for i in range(steps):
+		x[i] = xi + i * d
+	return x
+
+
+def true_fn(s: str):
 	return str(s).lower() == 'true'
 
 

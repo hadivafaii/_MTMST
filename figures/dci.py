@@ -177,10 +177,10 @@ def plot_scatter(
 		ylim=(0, 1),
 	)
 	kwargs = setup_kwargs(defaults, kwargs)
-	g, g_tst, select_i, select_lbl = prep_rofl()
+	g, select_lbl = prep_rofl()
 	fig, axes = create_figure(
 		nrows=2,
-		ncols=g.shape[1],
+		ncols=g['vld'].shape[1],
 		figsize=kwargs['figsize'],
 		sharex='col',
 		sharey='row',
@@ -192,12 +192,12 @@ def plot_scatter(
 		y = v['data_vld']['z']
 		r = 1 - sp_dist.cdist(
 			XA=y.T,
-			XB=g.T,
+			XB=g['vld'].T,
 			metric='correlation',
 		).T
 		inds = np.argmax(np.abs(r), axis=1)
-		for j in range(g.shape[1]):
-			_x = g[:, j]
+		for j in range(g['vld'].shape[1]):
+			_x = g['vld'][:, j]
 			_y = y[:, inds[j]]
 			_y = sp_stats.zscore(_y)
 

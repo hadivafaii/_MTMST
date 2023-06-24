@@ -137,6 +137,26 @@ class VAE(Module):
 		return self.out(s), latents, p_all
 
 	@torch.no_grad()
+	def generate(self, z: List[torch.Tensor]):
+		if not self.vanilla:
+			idx = 0
+			s = self.prior_ftr0.unsqueeze(0)
+			s = s.expand(z[idx].size(0), -1, -1, -1)
+			for cell in self.dec_tower:
+				if isinstance(cell, CombinerDec):
+					s = cell(s, self.expand[idx](z[idx]))
+					idx += 1
+				else:
+					s = cell(s)
+		else:
+			s = self.stem_decoder(z)
+
+		for cell in self.post_process:
+			s = cell(s)
+
+		return self.out(s)
+
+	@torch.no_grad()
 	def xtract_ftr(self, x, t: float = 0, full: bool = False):
 		ftr_enc = collections.defaultdict(list)
 		ftr_dec = collections.defaultdict(list)
@@ -308,6 +328,8 @@ class VAE(Module):
 		return kl_all, kl_diag
 
 	def loss_weight(self):
+		if not self.all_lognorm:
+			return
 		return torch.cat(self.all_lognorm).pow(2).mean()
 
 	def loss_spectral(self, device: torch.device = None, name: str = 'w'):
@@ -368,9 +390,11 @@ class VAE(Module):
 			self.cfg.n_groups_per_scale == 1
 		)
 		self.kws = dict(
+			reg_lognorm=not self.cfg.weight_norm,
 			act_fn=self.cfg.activation_fn,
 			use_bn=self.cfg.use_bn,
 			use_se=self.cfg.use_se,
+			eps=self.cfg.res_eps,
 			scale=1.0,
 		)
 		self._init_stem()
@@ -392,8 +416,8 @@ class VAE(Module):
 				self.stem_decoder = DeConv2D(
 					in_channels=self.cfg.n_latent_per_group,
 					out_channels=int(mult * self.cfg.n_ch),
+					reg_lognorm=not self.cfg.weight_norm,
 					kernel_size=self.scales[-1],
-					apply_norm=True,
 					normalize_dim=1,
 				)
 			else:
@@ -433,6 +457,7 @@ class VAE(Module):
 			in_channels=2,
 			out_channels=self.cfg.n_ch,
 			kernel_size=self.cfg.ker_sz,
+			reg_lognorm=not self.cfg.weight_norm,
 			padding='valid',
 		)
 		return
@@ -514,9 +539,10 @@ class VAE(Module):
 	def _init_enc0(self, mult):
 		ch = int(self.cfg.n_ch * mult)
 		kws = dict(
+			kernel_size=1,
 			in_channels=ch,
 			out_channels=ch,
-			kernel_size=1,
+			reg_lognorm=not self.cfg.weight_norm,
 		)
 		self.enc0 = nn.Sequential(
 			get_act_fn(self.cfg.activation_fn, inplace=True),
@@ -544,8 +570,8 @@ class VAE(Module):
 					expand.append(DeConv2D(
 						in_channels=self.cfg.n_latent_per_group,
 						out_channels=self.cfg.n_latent_per_group,
+						reg_lognorm=not self.cfg.weight_norm,
 						kernel_size=self.scales[s_inv],
-						apply_norm=True,
 						normalize_dim=1,
 					))
 				else:
@@ -646,18 +672,22 @@ class VAE(Module):
 		self.out = nn.Conv2d(**kws)
 		return
 
-	def _init_norm(self, apply_norm: List[str] = None):
-		apply_norm = apply_norm if apply_norm else [
+	def _init_norm(self, reg_list: List[str] = None):
+		reg_list = reg_list if reg_list else [
 			'stem', 'pre_process', 'expand',
 			'enc0', 'enc_tower', 'dec_tower',
-			'enc_sampler', 'dec_sampler',
+			# 'enc_sampler', 'dec_sampler',
 		]
 		self.all_conv_layers, self.all_lognorm = [], []
 		for child_name, child in self.named_children():
 			for m in child.modules():
 				if isinstance(m, (Conv2D, DeConv2D)):
 					self.all_conv_layers.append(m)
-					if child_name in apply_norm and m.apply_norm:
+					cond = (
+						child_name in reg_list and
+						m.lognorm.requires_grad
+					)
+					if cond:
 						self.all_lognorm.append(m.lognorm)
 		self.sr_u, self.sr_v = {}, {}
 		if self.cfg.spectral_norm:
@@ -690,7 +720,7 @@ class Sampler(nn.Module):
 			in_channels=in_channels,
 			out_channels=latent_dim * 2,
 			init_scale=init_scale,
-			apply_norm=False,
+			reg_lognorm=True,
 			bias=bias,
 		)
 		if compress:
@@ -706,7 +736,7 @@ class Sampler(nn.Module):
 				out_channels=in_channels,
 				kernel_size=spatial_dim,
 				groups=in_channels // reduction,
-				apply_norm=True,
+				reg_lognorm=True,
 				init_scale=1.0,
 				bias=bias,
 			)

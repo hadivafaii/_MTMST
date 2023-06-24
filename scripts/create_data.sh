@@ -2,8 +2,8 @@
 
 n_tot=${1-750000}
 n_batch=${2-50000}
-dim=${3-17}
-min_obj_size=${4-3.5}
+dim=${3-33}
+min_obj_size=${4-10.5}
 dtype=${5-"float32"}
 
 cd ..

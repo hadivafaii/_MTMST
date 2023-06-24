@@ -808,7 +808,7 @@ def _setup_args() -> argparse.Namespace:
 		"--strict",
 		help='strict load?',
 		default=False,
-		type=true,
+		type=true_fn,
 	)
 	parser.add_argument(
 		"--reservoir",
@@ -851,7 +851,7 @@ def _setup_args() -> argparse.Namespace:
 		"--apply_mask",
 		help='HyperFlow: apply mask or full field?',
 		default=True,
-		type=true,
+		type=true_fn,
 	)
 	parser.add_argument(
 		'--log_alphas',
@@ -888,13 +888,13 @@ def _setup_args() -> argparse.Namespace:
 		"--use_ema",
 		help='use ema or main model?',
 		default=False,
-		type=true,
+		type=true_fn,
 	)
 	parser.add_argument(
 		"--zscore",
 		help='zscore stim before STA?',
 		default=True,
-		type=true,
+		type=true_fn,
 	)
 	parser.add_argument(
 		"--glm",
@@ -1015,6 +1015,7 @@ def _main():
 		n_pcs=args.n_pcs,
 		n_lags=args.n_lags,
 		n_top_pix=args.n_top_pix,
+		dim=tr.model.cfg.input_sz,
 		rescale=args.rescale,
 		normalize=args.normalize,
 		verbose=args.verbose,

@@ -47,22 +47,28 @@ def get_stride(cell_type: str, cmult: int):
 def get_skip_connection(
 		ci: int,
 		cmult: int,
-		stride: Union[int, str], ):
+		stride: Union[int, str],
+		reg_lognorm: bool = True, ):
 	if isinstance(stride, str):
 		stride = get_stride(stride, cmult)
 	if stride == 1:
 		return nn.Identity()
 	elif stride in [2, 4]:
-		return FactorizedReduce(ci, int(cmult*ci))
+		return FactorizedReduce(
+			ci=ci,
+			co=int(cmult*ci),
+			reg_lognorm=reg_lognorm,
+		)
 	elif stride == -1:
 		return nn.Sequential(
 			nn.Upsample(
 				scale_factor=cmult,
 				mode='nearest'),
 			Conv2D(
+				kernel_size=1,
 				in_channels=ci,
 				out_channels=int(ci/cmult),
-				kernel_size=1),
+				reg_lognorm=reg_lognorm),
 		)
 	else:
 		raise NotImplementedError(stride)
@@ -87,18 +93,20 @@ def get_act_fn(
 
 
 class FactorizedReduce(nn.Module):
-	def __init__(self, ci: int, co: int):
+	def __init__(self, ci: int, co: int, **kwargs):
 		super(FactorizedReduce, self).__init__()
 		assert co % 2 == 0 and co > 4
 		co_each = co // 4
-		kwargs = {
+		defaults = {
+			'kernel_size': 1,
 			'in_channels': ci,
 			'out_channels': co_each,
-			'kernel_size': 1,
+			'reg_lognorm': True,
 			'stride': co // ci,
 			'padding': 0,
 			'bias': True,
 		}
+		kwargs = setup_kwargs(defaults, kwargs)
 		self.swish = nn.SiLU()
 		self.ops = nn.ModuleList()
 		for i in range(3):
@@ -143,12 +151,15 @@ class Cell(nn.Module):
 			use_bn: bool,
 			use_se: bool,
 			scale: float,
+			eps: float,
 			**kwargs,
 	):
 		super(Cell, self).__init__()
 		assert n_nodes >= 1
+		kws_skip = filter_kwargs(
+			get_skip_connection, kwargs)
 		self.skip = get_skip_connection(
-			ci, MULT, cell_type)
+			ci, MULT, cell_type, **kws_skip)
 		self.ops = nn.ModuleList()
 		for i in range(n_nodes):
 			op = ConvLayer(
@@ -168,6 +179,7 @@ class Cell(nn.Module):
 			self.se = SELayer(co)
 		else:
 			self.se = None
+		self.eps = eps
 
 	def forward(self, x):
 		skip = self.skip(x)
@@ -175,7 +187,7 @@ class Cell(nn.Module):
 			x = op(x)
 		if self.se is not None:
 			x = self.se(x)
-		return skip + x
+		return skip + self.eps * x
 
 
 class ConvLayer(nn.Module):
@@ -194,7 +206,7 @@ class ConvLayer(nn.Module):
 			'out_channels': co,
 			'kernel_size': 3,
 			'normalize_dim': 0,
-			'apply_norm': True,
+			'reg_lognorm': True,
 			'init_scale': 1.0,
 			'stride': abs(stride),
 			'padding': 1,
@@ -235,7 +247,7 @@ class Conv1D(nn.Conv1d):
 			out_channels: int,
 			kernel_size: int,
 			normalize_dim: int = 0,
-			apply_norm: bool = True,
+			reg_lognorm: bool = True,
 			init_scale: float = 1.0,
 			**kwargs,
 	):
@@ -249,12 +261,11 @@ class Conv1D(nn.Conv1d):
 			**kwargs,
 		)
 		assert init_scale > 0
-		self.apply_norm = apply_norm
 		self.dims, self.shape = _dims(normalize_dim, 3)
 		init = torch.ones(self.out_channels).mul(init_scale)
 		self.lognorm = nn.Parameter(
 			data=torch.log(init),
-			requires_grad=True,
+			requires_grad=reg_lognorm,
 		)
 		self._normalize_weight()
 
@@ -286,7 +297,7 @@ class Conv2D(nn.Conv2d):
 			out_channels: int,
 			kernel_size: int,
 			normalize_dim: int = 0,
-			apply_norm: bool = True,
+			reg_lognorm: bool = True,
 			init_scale: float = 1.0,
 			**kwargs,
 	):
@@ -298,12 +309,11 @@ class Conv2D(nn.Conv2d):
 			**kwargs,
 		)
 		assert init_scale > 0
-		self.apply_norm = apply_norm
 		self.dims, self.shape = _dims(normalize_dim, 4)
 		init = torch.ones(self.out_channels).mul(init_scale)
 		self.lognorm = nn.Parameter(
 			data=torch.log(init),
-			requires_grad=True,
+			requires_grad=reg_lognorm,
 		)
 		self._normalize_weight()
 
@@ -335,7 +345,7 @@ class DeConv2D(nn.ConvTranspose2d):
 			out_channels: int,
 			kernel_size: Union[int, Tuple[int, int]],
 			normalize_dim: int = 1,
-			apply_norm: bool = True,
+			reg_lognorm: bool = True,
 			init_scale: float = 1.0,
 			**kwargs,
 	):
@@ -347,12 +357,11 @@ class DeConv2D(nn.ConvTranspose2d):
 			**kwargs,
 		)
 		assert init_scale > 0
-		self.apply_norm = apply_norm
 		self.dims, self.shape = _dims(normalize_dim, 4)
 		init = torch.ones(self.out_channels).mul(init_scale)
 		self.lognorm = nn.Parameter(
 			data=torch.log(init),
-			requires_grad=True,
+			requires_grad=reg_lognorm,
 		)
 		self._normalize_weight()
 
@@ -383,7 +392,7 @@ class Linear(nn.Linear):
 			in_features: int,
 			out_features: int,
 			normalize_dim: int = 0,
-			apply_norm: bool = True,
+			reg_lognorm: bool = True,
 			init_scale: float = 1.0,
 			**kwargs,
 	):
@@ -394,12 +403,11 @@ class Linear(nn.Linear):
 			**kwargs,
 		)
 		assert init_scale > 0
-		self.apply_norm = apply_norm
 		self.dims, self.shape = _dims(normalize_dim, 2)
 		init = torch.ones(self.out_features).mul(init_scale)
 		self.lognorm = nn.Parameter(
 			data=torch.log(init),
-			requires_grad=True,
+			requires_grad=reg_lognorm,
 		)
 		self._normalize_weight()
 

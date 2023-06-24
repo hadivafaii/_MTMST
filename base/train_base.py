@@ -9,10 +9,12 @@ class BaseTrainer(object):
 			model: Module,
 			cfg: Any,
 			device: str = 'cpu',
+			shuffle: bool = True,
 			verbose: bool = False,
 	):
 		super(BaseTrainer, self).__init__()
 		self.cfg = cfg
+		self.shuffle = shuffle
 		self.verbose = verbose
 		self.device = torch.device(device)
 		self.model = model.to(self.device).eval()
@@ -140,6 +142,15 @@ class BaseTrainer(object):
 			p2.data.add_(p1.data.mul(1-self.ema_rate))
 		return
 
+	def parameters(self, requires_grad: bool = True):
+		if requires_grad:
+			return filter(
+				lambda p: p.requires_grad,
+				self.model.parameters(),
+			)
+		else:
+			return self.model.parameters()
+
 	def save(self, path: str, checkpoint: int = None):
 		if checkpoint is not None:
 			global_step = checkpoint * len(self.dl_trn)
@@ -174,9 +185,8 @@ class BaseTrainer(object):
 
 	def setup_optim(self):
 		# optimzer
-		params = self.model.parameters()
 		kws = dict(
-			params=params,
+			params=self.parameters(),
 			lr=self.cfg.lr,
 			**self.cfg.optimizer_kws,
 		)
@@ -206,7 +216,7 @@ class BaseTrainer(object):
 				self.optim, **self.cfg.scheduler_kws)
 		elif self.cfg.scheduler_type == 'cyclic':
 			self.optim = torch.optim.SGD(
-				params=params,
+				params=self.parameters(),
 				lr=self.cfg.lr,
 				momentum=0.9,
 				weight_decay=self.cfg.optimizer_kws.get('weight_decay', 0),

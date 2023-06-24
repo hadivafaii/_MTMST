@@ -85,10 +85,9 @@ def generate_simulation(
 		of = ROFL(**kws).compute_coords()
 		_ = of.compute_flow()
 		# accept
-		min_n_obj = accept_n[n_obj]
 		accept = of.filter(
 			min_obj_size=min_obj_size,
-			min_n_obj=min_n_obj,
+			min_n_obj=accept_n[n_obj],
 		)
 		f, g, f_aux, g_aux = of.groundtruth_factors()
 		ind = range(cnt, min(cnt + accept.sum(), total))
@@ -302,10 +301,9 @@ def time_embed(x, lags, idxs=None):
 
 
 def simulation_combos():
-	combos = [('fixate', i) for i in [0, 1, 2, 4, 8]]
-	combos += [('transl', i) for i in [0, 1, 2, 4, 8]]
-	combos += [('terrain', i) for i in [1, 2, 4, 8]]
-	combos += [('obj', i) for i in [1, 2, 4, 8]]
+	combos = [('fixate', i) for i in [0, 1]]
+	combos += [('transl', i) for i in [0, 1]]
+	combos += [('obj', i) for i in [1]]
 	return combos
 
 
@@ -326,13 +324,13 @@ def _setup_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--dim",
 		help='dimensionality',
-		default=17,
+		default=33,
 		type=int,
 	)
 	parser.add_argument(
 		"--min_obj_size",
 		help='minimum acceptable object size',
-		default=3.5,
+		default=10.5,
 		type=float,
 	)
 	parser.add_argument(
@@ -353,7 +351,7 @@ def _main():
 		dim=args.dim,
 		fov=45.0,
 		obj_r=0.25,
-		obj_bound=0.97,
+		obj_bound=1.0,
 		obj_zlim=(0.5, 1.0),
 		vlim_obj=(0.01, 1.0),
 		vlim_slf=(0.01, 1.0),

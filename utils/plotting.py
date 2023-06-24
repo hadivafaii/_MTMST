@@ -8,6 +8,17 @@ from matplotlib.backends.backend_pdf import FigureCanvasPdf, PdfPages
 from matplotlib.colors import to_rgb, rgb2hex, Colormap, LinearSegmentedColormap
 
 
+def make_ticks(
+		span: Iterable[float],
+		tick_spacing: int, ):
+	ticks, ticklabels = zip(*[
+		(x, (str(x))) for i, x
+		in enumerate(span) if
+		i % tick_spacing == 0
+	])
+	return ticks, ticklabels
+
+
 def barplot_add_vals(
 		axes,
 		frac_x: float = 0.5,
@@ -364,8 +375,8 @@ def create_figure(
 		dpi=dpi,
 		**kwargs,
 	)
-	if nrows * ncols > 1 and reshape:
-		axes = np.reshape(axes, (nrows, ncols))
+	if reshape:
+		axes = np.array(axes).reshape((nrows, ncols))
 	return fig, axes
 
 

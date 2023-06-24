@@ -8,6 +8,7 @@ class ConfigVAE(BaseConfig):
 			n_ch: int = 32,
 			ker_sz: int = 2,
 			input_sz: int = 17,
+			res_eps: float = 0.1,
 			n_enc_cells: int = 2,
 			n_enc_nodes: int = 2,
 			n_dec_cells: int = 2,
@@ -17,14 +18,15 @@ class ConfigVAE(BaseConfig):
 			n_post_cells: int = 3,
 			n_post_blocks: int = 1,
 			n_latent_scales: int = 3,
-			n_latent_per_group: int = 20,
-			n_groups_per_scale: int = 12,
+			n_latent_per_group: int = 16,
+			n_groups_per_scale: int = 20,
 			activation_fn: str = 'swish',
 			balanced_recon: bool = True,
 			residual_kl: bool = True,
 			scale_init: bool = False,
 			separable: bool = False,
 			ada_groups: bool = True,
+			weight_norm: bool = False,
 			spectral_norm: int = 0,
 			compress: bool = True,
 			use_bn: bool = False,
@@ -48,6 +50,7 @@ class ConfigVAE(BaseConfig):
 		self.n_latent_per_group = n_latent_per_group
 		self.n_groups_per_scale = n_groups_per_scale
 		self.spectral_norm = spectral_norm
+		self.weight_norm = weight_norm
 		self.separable = separable
 		self.compress = compress
 		self.use_bn = use_bn
@@ -62,6 +65,7 @@ class ConfigVAE(BaseConfig):
 			full=full,
 			**kwargs,
 		)
+		self.res_eps = res_eps
 		self.balanced_recon = balanced_recon
 		self.activation_fn = activation_fn
 		self.residual_kl = residual_kl
@@ -72,11 +76,12 @@ class ConfigVAE(BaseConfig):
 	def name(self):
 		name = [
 			str(self.sim),
-			f"k-{self.n_ch}",
 			'x'.join([
 				f"z-{self.n_latent_per_group}",
 				str(list(reversed(self.groups))),
 			]).replace(' ', ''),
+			f"k-{self.n_ch}",
+			f"d-{self.input_sz}",
 			'-'.join([
 				'x'.join([
 					f"enc({self.n_enc_cells}",
@@ -97,6 +102,8 @@ class ConfigVAE(BaseConfig):
 			]),
 		]
 		name = '_'.join(name)
+		if self.weight_norm:
+			name = f"{name}_wn"
 		if self.spectral_norm:
 			name = f"{name}_sn-{self.spectral_norm}"
 		if self.separable:

@@ -382,6 +382,18 @@ def _setup_args() -> argparse.Namespace:
 		default=32,
 		type=int,
 	)
+	parser.add_argument(
+		"--input_sz",
+		help='ROFL dim',
+		default=33,
+		type=int,
+	)
+	parser.add_argument(
+		"--res_eps",
+		help='x + eps * f(x)',
+		default=0.1,
+		type=float,
+	)
 	# enc
 	parser.add_argument(
 		"--n_enc_cells",
@@ -469,25 +481,25 @@ def _setup_args() -> argparse.Namespace:
 		"--ada_groups",
 		help='adaptive latent groups?',
 		default=True,
-		type=true,
+		type=true_fn,
 	)
 	parser.add_argument(
 		"--compress",
 		help='compress latent space?',
 		default=True,
-		type=true,
+		type=true_fn,
 	)
 	parser.add_argument(
 		"--use_bn",
 		help='use batch norm?',
 		default=False,
-		type=true,
+		type=true_fn,
 	)
 	parser.add_argument(
 		"--use_se",
 		help='use squeeze & excite?',
 		default=True,
-		type=true,
+		type=true_fn,
 	)
 	# training
 	parser.add_argument(
@@ -530,7 +542,7 @@ def _setup_args() -> argparse.Namespace:
 		"--lambda_anneal",
 		help='anneal weight reg coeff?',
 		default=False,
-		type=true,
+		type=true_fn,
 	)
 	parser.add_argument(
 		"--lambda_norm",
@@ -585,6 +597,8 @@ def _main():
 		sim=args.sim,
 		seed=args.seed,
 		n_ch=args.n_ch,
+		res_eps=args.res_eps,
+		input_sz=args.input_sz,
 		n_enc_cells=args.n_enc_cells,
 		n_enc_nodes=args.n_enc_nodes,
 		n_dec_cells=args.n_dec_cells,

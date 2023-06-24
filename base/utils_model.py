@@ -163,11 +163,12 @@ def print_num_params(module: nn.Module):
 	return
 
 
-def load_model_lite(  # TODO: make it worh for both VAE + AE
+def load_model_lite(
 		path: str,
 		device: str = 'cpu',
 		strict: bool = True,
-		verbose: bool = False, ):
+		verbose: bool = False,
+		**kwargs, ):
 	# load model
 	cfg = next(
 		e for e in os.listdir(path)
@@ -223,6 +224,7 @@ def load_model_lite(  # TODO: make it worh for both VAE + AE
 			device=device,
 			verbose=verbose,
 			ema=ema,
+			**kwargs,
 		)
 	elif fname.endswith('AE'):
 		from ae.train_ae import TrainerAE
@@ -233,6 +235,7 @@ def load_model_lite(  # TODO: make it worh for both VAE + AE
 			device=device,
 			verbose=verbose,
 			ema=ema,
+			**kwargs,
 		)
 	else:
 		raise NotImplementedError
@@ -268,7 +271,8 @@ def load_model(
 		device: str = 'cpu',
 		strict: bool = True,
 		verbose: bool = False,
-		path: str = 'Documents/MTMST/models', ):
+		path: str = 'Documents/MTMST/models',
+		**kwargs, ):
 	# cfg model
 	path = pjoin(os.environ['HOME'], path, model_name)
 	fname = next(s for s in os.listdir(path) if 'json' in s)
@@ -326,24 +330,26 @@ def load_model(
 		cfg_train = json.load(f)
 	fname = fname.split('.')[0]
 	if fname == 'ConfigTrainVAE':
-		cfg_train = ConfigTrainVAE(**cfg_train)
 		from vae.train_vae import TrainerVAE
+		cfg_train = ConfigTrainVAE(**cfg_train)
 		trainer = TrainerVAE(
 			model=model,
 			cfg=cfg_train,
 			device=device,
 			verbose=verbose,
 			ema=ema,
+			**kwargs,
 		)
 	elif fname == 'ConfigTrainAE':
-		cfg_train = ConfigTrainAE(**cfg_train)
 		from ae.train_ae import TrainerAE
+		cfg_train = ConfigTrainAE(**cfg_train)
 		trainer = TrainerAE(
 			model=model,
 			cfg=cfg_train,
 			device=device,
 			verbose=verbose,
 			ema=ema,
+			**kwargs,
 		)
 	else:
 		raise NotImplementedError

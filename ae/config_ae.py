@@ -9,6 +9,7 @@ class ConfigAE(BaseConfig):
 			n_ch: int = 32,
 			ker_sz: int = 2,
 			input_sz: int = 17,
+			res_eps: float = 0.1,
 			n_enc_cells: int = 2,
 			n_enc_nodes: int = 2,
 			n_dec_cells: int = 2,
@@ -62,6 +63,7 @@ class ConfigAE(BaseConfig):
 			full=full,
 			**kwargs,
 		)
+		self.res_eps = res_eps
 		self.balanced_recon = balanced_recon
 		self.activation_fn = activation_fn
 		self.scale_init = scale_init
@@ -71,11 +73,12 @@ class ConfigAE(BaseConfig):
 	def name(self):
 		name = [
 			str(self.sim),
-			f"k-{self.n_ch}",
 			'x'.join([
 				f"h-{self.n_latent_per_group}",
 				str(list(reversed(self.groups))),
 			]).replace(' ', ''),
+			f"k-{self.n_ch}",
+			f"d-{self.input_sz}",
 			'-'.join([
 				'x'.join([
 					f"enc({self.n_enc_cells}",

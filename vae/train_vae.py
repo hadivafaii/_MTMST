@@ -93,7 +93,7 @@ class TrainerVAE(BaseTrainer):
 				loss = torch.mean(epe + balanced_kl)
 				# add regularization
 				loss_w = self.model.loss_weight()
-				if self.wd_coeffs[gstep] > 0:
+				if self.wd_coeffs[gstep] > 0 and loss_w is not None:
 					loss += self.wd_coeffs[gstep] * loss_w
 				cond_reg_spectral = self.cfg.lambda_norm > 0 \
 					and self.cfg.spectral_reg and \
@@ -114,7 +114,7 @@ class TrainerVAE(BaseTrainer):
 				else:
 					max_norm = self.cfg.grad_clip
 				grad_norm = nn.utils.clip_grad_norm_(
-					parameters=self.model.parameters(),
+					parameters=self.parameters(),
 					max_norm=max_norm,
 				).item()
 				grads.update(grad_norm)
@@ -160,7 +160,8 @@ class TrainerVAE(BaseTrainer):
 				'train/nelbo_avg': nelbo.avg,
 				'train/perdim_kl': perdim_kl.avg,
 				'train/perdim_epe': perdim_epe.avg,
-				'train/reg_weight': loss_w.item(),
+				'train/reg_weight': 0 if loss_w is None
+				else loss_w.item(),
 			}
 			if self.cfg.grad_clip is not None:
 				to_write['train/grad_norm'] = grads.avg
@@ -195,7 +196,7 @@ class TrainerVAE(BaseTrainer):
 
 		# sample? plot?
 		if gstep is not None:
-			freq = max(20, self.cfg.eval_freq * 5)
+			freq = max(10, self.cfg.eval_freq * 5)
 			ep = int(gstep / len(self.dl_trn))
 			cond = ep % freq == 0
 		else:
@@ -456,8 +457,8 @@ class TrainerVAE(BaseTrainer):
 		# cleate dataloaders
 		kws = dict(
 			batch_size=self.cfg.batch_size,
+			shuffle=self.shuffle,
 			drop_last=True,
-			shuffle=True,
 		)
 		self.dl_trn = DataLoader(ds_trn, **kws)
 		kws.update({'drop_last': False, 'shuffle': False})
@@ -496,30 +497,42 @@ def _setup_args() -> argparse.Namespace:
 		default=32,
 		type=int,
 	)
+	parser.add_argument(
+		"--input_sz",
+		help='ROFL dim',
+		default=17,
+		type=int,
+	)
+	parser.add_argument(
+		"--res_eps",
+		help='x + eps * f(x)',
+		default=0.1,
+		type=float,
+	)
 	# enc
 	parser.add_argument(
 		"--n_enc_cells",
 		help='# enc cells',
-		default=1,
+		default=2,
 		type=int,
 	)
 	parser.add_argument(
 		"--n_enc_nodes",
 		help='# enc nodes',
-		default=3,
+		default=2,
 		type=int,
 	)
 	# dec
 	parser.add_argument(
 		"--n_dec_cells",
 		help='# dec cells',
-		default=1,
+		default=2,
 		type=int,
 	)
 	parser.add_argument(
 		"--n_dec_nodes",
 		help='# dec nodes',
-		default=2,
+		default=1,
 		type=int,
 	)
 	# pre
@@ -558,13 +571,13 @@ def _setup_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--n_latent_per_group",
 		help='# latents per group',
-		default=20,
+		default=14,
 		type=int,
 	)
 	parser.add_argument(
 		"--n_groups_per_scale",
 		help='# groups per scale',
-		default=12,
+		default=20,
 		type=int,
 	)
 	parser.add_argument(
@@ -572,6 +585,12 @@ def _setup_args() -> argparse.Namespace:
 		help='activation function',
 		default='swish',
 		type=str,
+	)
+	parser.add_argument(
+		"--weight_norm",
+		help='weight norm (disable to use soft reg)',
+		default=False,
+		type=true_fn,
 	)
 	parser.add_argument(
 		"--spectral_norm",
@@ -583,25 +602,25 @@ def _setup_args() -> argparse.Namespace:
 		"--ada_groups",
 		help='adaptive latent groups?',
 		default=True,
-		type=true,
+		type=true_fn,
 	)
 	parser.add_argument(
 		"--compress",
 		help='compress latent space?',
 		default=True,
-		type=true,
+		type=true_fn,
 	)
 	parser.add_argument(
 		"--use_bn",
 		help='use batch norm?',
 		default=False,
-		type=true,
+		type=true_fn,
 	)
 	parser.add_argument(
 		"--use_se",
 		help='use squeeze & excite?',
 		default=True,
-		type=true,
+		type=true_fn,
 	)
 	# training
 	parser.add_argument(
@@ -613,13 +632,13 @@ def _setup_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--epochs",
 		help='# epochs',
-		default=160,
+		default=500,
 		type=int,
 	)
 	parser.add_argument(
 		"--batch_size",
 		help='batch size',
-		default=600,
+		default=1200,
 		type=int,
 	)
 	parser.add_argument(
@@ -643,13 +662,13 @@ def _setup_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--kl_beta",
 		help='kl loss beta coefficient',
-		default=0.15,
+		default=0.1,
 		type=float,
 	)
 	parser.add_argument(
 		"--kl_anneal_portion",
 		help='kl beta anneal portion',
-		default=0.5,
+		default=0.3,
 		type=float,
 	)
 	parser.add_argument(
@@ -668,12 +687,12 @@ def _setup_args() -> argparse.Namespace:
 		"--lambda_anneal",
 		help='anneal weight reg coeff?',
 		default=False,
-		type=true,
+		type=true_fn,
 	)
 	parser.add_argument(
 		"--lambda_norm",
 		help='weight regularization strength',
-		default=1e-4,
+		default=1e-2,
 		type=float,
 	)
 	parser.add_argument(
@@ -691,7 +710,7 @@ def _setup_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--chkpt_freq",
 		help='checkpoint freq',
-		default=10,
+		default=20,
 		type=int,
 	)
 	parser.add_argument(
@@ -723,6 +742,8 @@ def _main():
 		sim=args.sim,
 		seed=args.seed,
 		n_ch=args.n_ch,
+		res_eps=args.res_eps,
+		input_sz=args.input_sz,
 		n_enc_cells=args.n_enc_cells,
 		n_enc_nodes=args.n_enc_nodes,
 		n_dec_cells=args.n_dec_cells,
@@ -736,6 +757,7 @@ def _main():
 		n_groups_per_scale=args.n_groups_per_scale,
 		activation_fn=args.activation_fn,
 		spectral_norm=args.spectral_norm,
+		weight_norm=args.weight_norm,
 		ada_groups=args.ada_groups,
 		compress=args.compress,
 		save=not args.dry_run,
