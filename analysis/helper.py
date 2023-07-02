@@ -57,25 +57,32 @@ def save_script_vae(
 def save_script_neural(
 		fits: List[str],
 		device: str,
-		args: str = None,
+		args: Union[str, List[str]] = None,
 		path: str = 'Dropbox/git/_MTMST/scripts', ):
-	def _make_script(f):
+	def _make_script(f, a):
 		s = f.replace('(', '\(').replace(')', '\)')
 		s = ' '.join(s.split('/'))
 		s = f"./fit_neuron.sh {s} {device}"
-		if args is not None:
-			s = f"{s} {args}"
+		if a is not None:
+			s = f"{s} {a}"
 		return s
 
 	path = pjoin(os.environ['HOME'], path)
 	if isinstance(fits, list):
+		if isinstance(args, list):
+			assert len(args) == len(fits)
+		elif isinstance(args, str):
+			args = [args] * len(fits)
+		else:
+			raise RuntimeError(type(args))
 		scripts = [
-			_make_script(fit)
-			for fit in fits
+			_make_script(fit, a) for
+			fit, a in zip(fits, args)
 		]
 		scripts = ' && '.join(scripts)
 	elif isinstance(fits, str):
-		scripts = _make_script(fits)
+		assert isinstance(args, str)
+		scripts = _make_script(fits, args)
 	else:
 		return
 	if not scripts:

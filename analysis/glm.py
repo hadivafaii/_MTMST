@@ -595,7 +595,7 @@ def summarize_neural_fits(
 				pix_counts[i] = collections.Counter([
 					tuple(e) for e in
 					ro.top_pix_per_lag[i]
-				]).get(best, 0)
+				]).get(tuple(best), 0)
 			df[-1].update({
 				'pix_rank': pix_ranks.values(),
 				'pix_count': pix_counts.values(),

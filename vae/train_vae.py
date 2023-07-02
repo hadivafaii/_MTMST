@@ -726,6 +726,12 @@ def _setup_args() -> argparse.Namespace:
 		type=int,
 	)
 	parser.add_argument(
+		"--use_amp",
+		help='automatic mixed precision?',
+		action='store_true',
+		default=False,
+	)
+	parser.add_argument(
 		"--dry_run",
 		help='to make sure config is alright',
 		action='store_true',
@@ -779,6 +785,7 @@ def _main():
 			warmup_portion=args.warmup_portion,
 			optimizer=args.optimizer,
 			grad_clip=args.grad_clip,
+			use_amp=args.use_amp,
 			# kl
 			kl_beta=args.kl_beta,
 			kl_anneal_portion=args.kl_anneal_portion,
