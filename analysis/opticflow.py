@@ -514,55 +514,107 @@ class ROFL(object):
 	def _init_span(self):
 		self.res = 2 * self.fov / (self.dim - 1)
 		self.span = np.deg2rad(np.linspace(
-			-self.fov, self.fov, self.dim))
+			start=-self.fov,
+			stop=self.fov,
+			num=self.dim,
+		))
 		return
 
 
 class HyperFlow(object):
 	def __init__(
 			self,
+			dim: int,
 			params: np.ndarray,
 			center: np.ndarray,
-			r_ratio: np.ndarray,
+			diameter: np.ndarray,
 			apply_mask: bool = True,
-			dim: int = 17,
-			sres: float = 1,
-			tres: int = 25,
+			fov: float = 15.0,
 	):
 		super(HyperFlow, self).__init__()
 		assert params.shape[1] == 6
 		assert center.shape[1] == 2
+		self.dim = dim
+		self.fov = fov
+		self._init_span()
 		self.params = params
 		self.center = center
-		if isinstance(r_ratio, float):
-			r_ratio = np.ones(len(params)) * r_ratio
-		self.radius = r_ratio * dim
+		if isinstance(diameter, float):
+			diameter *= np.ones(len(params))
+		self.diameter = diameter
 		assert len(self.params) == \
-			len(self.center) == \
-			len(self.radius)
+			len(self.diameter) == \
+			len(self.center)
 		self.apply_mask = apply_mask
-		self.dim = (dim, dim)
-		self.sres = sres
-		self.tres = tres
 
 	def compute_hyperflow(
 			self,
 			dtype: str = 'float32',
 			transpose: bool = True, ):
-		dim = tuple(
-			e // self.sres for
-			e in self.dim
-		)
-		shape = (-1, ) + dim + (2, )
+		shape = (-1, self.dim, self.dim, 2)
 		stim = self._hf().reshape(shape)
 		if transpose:
 			stim = np.transpose(
 				stim, (0, -1, 1, 2))
 		return stim.astype(dtype)
 
+	def _hf(self):
+		x0, y0 = np.meshgrid(
+			self.span, self.span)
+		stim = np.zeros((
+			len(self.params),
+			len(x0) * len(y0) * 2,
+		))
+		for t in range(len(self.params)):
+			x = x0 - self.center[t, 0]
+			y = y0 - self.center[t, 1]
+			if self.apply_mask:
+				r = self.diameter[t] / 2
+				mask = x ** 2 + y ** 2 <= r ** 2
+			else:
+				mask = np.ones((len(x0), len(y0)))
+
+			raw = np.zeros((len(x0), len(y0), 2, 6))
+			# translation
+			raw[..., 0, 0] = mask
+			raw[..., 1, 0] = 0
+			raw[..., 0, 1] = 0
+			raw[..., 1, 1] = mask
+			# expansion
+			raw[..., 0, 2] = x * mask
+			raw[..., 1, 2] = y * mask
+			# rotation
+			raw[..., 0, 3] = -y * mask
+			raw[..., 1, 3] = x * mask
+			# shear 1
+			raw[..., 0, 4] = x * mask
+			raw[..., 1, 4] = -y * mask
+			# shear 2
+			raw[..., 0, 5] = y * mask
+			raw[..., 1, 5] = x * mask
+
+			# reconstruct stimuli
+			stim[t] = np.reshape(
+				a=raw,
+				newshape=(-1, raw.shape[-1]),
+				order='C',
+			) @ self.params[t]
+
+		return stim
+
+	def _init_span(self):
+		self.res = 2 * self.fov / (self.dim - 1)
+		self.span = np.linspace(
+			start=-self.fov,
+			stop=self.fov,
+			num=self.dim,
+		)
+		return
+
 	def show_psd(
 			self,
 			attr: str = 'opticflow',
+			tres: float = 25.0,
 			log: bool = True,
 			**kwargs, ):
 		defaults = {
@@ -573,7 +625,7 @@ class HyperFlow(object):
 			'ylim_bottom': 1e-5 if log else 0,
 			'c': 'C0' if attr == 'opticflow' else 'k',
 			'cutoff': 2 if attr == 'opticflow' else 0.2,
-			'fs': 1000 / self.tres,
+			'fs': 1000 / tres,
 			'detrend': False,
 		}
 		for k, v in defaults.items():
@@ -613,61 +665,6 @@ class HyperFlow(object):
 			ax.legend(loc='upper right')
 		plt.show()
 		return f, px
-
-	def _hf(self):
-		xl, yl = self.dim
-		xl = int(np.round(xl / self.sres))
-		yl = int(np.round(yl / self.sres))
-
-		xi0 = np.linspace(
-			start=-xl / 2 + 0.5,
-			stop=xl / 2 - 0.5,
-			num=xl,
-		) * self.sres
-		yi0 = np.linspace(
-			start=-yl / 2 + 0.5,
-			stop=yl / 2 - 0.5,
-			num=yl,
-		) * self.sres
-		xi0, yi0 = np.meshgrid(xi0, yi0)
-
-		stim = np.zeros((len(self.params), xl * yl * 2))
-		for t in range(len(self.params)):
-			xi = xi0 - self.center[t, 0]
-			yi = yi0 - self.center[t, 1]
-			if self.apply_mask:
-				r = self.radius[t]
-				mask = xi ** 2 + yi ** 2 <= r ** 2
-			else:
-				mask = np.ones((xl, yl))
-			raw = np.zeros((xl, yl, 2, 6))
-
-			# translation
-			raw[..., 0, 0] = mask
-			raw[..., 1, 0] = 0
-			raw[..., 0, 1] = 0
-			raw[..., 1, 1] = mask
-			# expansion
-			raw[..., 0, 2] = xi * mask
-			raw[..., 1, 2] = yi * mask
-			# rotation
-			raw[..., 0, 3] = -yi * mask
-			raw[..., 1, 3] = xi * mask
-			# shear 1
-			raw[..., 0, 4] = xi * mask
-			raw[..., 1, 4] = -yi * mask
-			# shear 2
-			raw[..., 0, 5] = yi * mask
-			raw[..., 1, 5] = xi * mask
-
-			# reconstruct stimuli
-			stim[t] = np.reshape(
-				a=raw,
-				newshape=(-1, raw.shape[-1]),
-				order='C',
-			) @ self.params[t]
-
-		return stim
 
 
 class VelField(object):

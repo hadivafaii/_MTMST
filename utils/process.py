@@ -48,16 +48,15 @@ def process_crcns(g: h5py.Group, path: str):
 		eyeloc = processed['eyeloc'].astype(float)
 		hf_params = processed['hf_params'].astype(float)
 		hf_center = processed['hf_center'].astype(float)
-		hf_radius = processed['aperturediameter'] / 2
-		hf_radius = hf_radius * np.ones(len(hf_center))
+		hf_diameter = processed['aperturediameter']
+		hf_diameter = hf_diameter * np.ones(len(hf_center))
 		# create dataset
 		data = [
 			('spks', float, spks),
 			('eyeloc', float, eyeloc),
 			('hf_params', float, hf_params),
 			('hf_center', float, hf_center),
-			('hf_radius', float, hf_radius),
-			('hf_radius_ratio', float, hf_radius / DESIGNSZ),
+			('hf_diameter', float, hf_diameter),
 		]
 		for a, b, c in data:
 			group.create_dataset(a, dtype=b, data=c)
@@ -99,11 +98,11 @@ def process_mtmst(g: h5py.Group, path: str, tres: int):
 		], axis=-1).astype(float)
 		diameter = mat_content['diameter'][0].astype(float)
 		partition = mat_content['partition'][0].astype(int)
-		hf_radius = np.zeros(len(hf_center))
+		hf_diameter = np.zeros(len(hf_center))
 		for i in range(len(partition) - 1):
 			intvl = range(partition[i], partition[i + 1])
-			hf_radius[intvl] = diameter[i] / 2
-		assert not any(hf_radius == 0)
+			hf_diameter[intvl] = diameter[i]
+		assert not any(hf_diameter == 0)
 
 		# create datasets
 		data = [
@@ -112,8 +111,7 @@ def process_mtmst(g: h5py.Group, path: str, tres: int):
 			('badspks', bool, badspks),
 			('hf_params', float, hf_params),
 			('hf_center', float, hf_center),
-			('hf_radius', float, hf_radius),
-			('hf_radius_ratio', float, hf_radius / DESIGNSZ),
+			('hf_diameter', float, hf_diameter),
 		]
 		for a, b, c in data:
 			group.create_dataset(a, dtype=b, data=c)
@@ -155,11 +153,11 @@ def process_mtmst(g: h5py.Group, path: str, tres: int):
 			], axis=-1).astype(float)
 			diameter_r = mat_content['diameterR'][0].astype(float)
 			partition_r = mat_content['partitionR'][0].astype(int)
-			hf_radius_r = np.zeros(len(hf_center_r))
+			hf_diameter_r = np.zeros(len(hf_center_r))
 			for i in range(len(partition_r) - 1):
 				intvl = range(partition_r[i], partition_r[i + 1])
-				hf_radius_r[intvl] = diameter_r[i] / 2
-			assert not any(hf_radius_r == 0)
+				hf_diameter_r[intvl] = diameter_r[i]
+			assert not any(hf_diameter_r == 0)
 			psth_raw_all = mat_content['psth_raw_all'].astype(int)
 			fix_lost_all = mat_content['fix_lost_all'].astype(bool)
 			tind_start_all = mat_content['tind_start_all'].astype(int)
@@ -174,8 +172,7 @@ def process_mtmst(g: h5py.Group, path: str, tres: int):
 				('badspksR', bool, badspks_r),
 				('hf_paramsR', float, hf_params_r),
 				('hf_centerR', float, hf_center_r),
-				('hf_radiusR', float, hf_radius_r),
-				('hf_radius_ratioR', float, hf_radius_r / DESIGNSZ),
+				('hf_diameterR', float, hf_diameter_r),
 				('fix_lost_all', int, fix_lost_all),
 				('psth_raw_all', float, psth_raw_all),
 				('tind_start_all', int, tind_start_all),

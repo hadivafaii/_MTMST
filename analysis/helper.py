@@ -71,7 +71,7 @@ def save_script_neural(
 	if isinstance(fits, list):
 		if isinstance(args, list):
 			assert len(args) == len(fits)
-		elif isinstance(args, str):
+		elif isinstance(args, str) or args is None:
 			args = [args] * len(fits)
 		else:
 			raise RuntimeError(type(args))

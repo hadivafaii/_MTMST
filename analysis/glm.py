@@ -41,8 +41,8 @@ class Neuron(object):
 		self.n_lags = n_lags
 		self.rescale = rescale
 		self.kws_hf = {
-			k: kwargs[k] if k in kwargs else v for k, v in
-			dict(dim=17, sres=1, apply_mask=True).items()
+			k: kwargs[k] if k in kwargs else v for k, v
+			in dict(dim=17, apply_mask=True).items()
 		}
 		self.kws_xt = {
 			k: kwargs[k] if k in kwargs else v for k, v in

@@ -189,10 +189,59 @@ def save_simulation(
 	return
 
 
+def load_ephys(
+		group: h5py.Group,
+		kws_hf: dict = None,
+		rescale: float = 2.0,
+		dtype: str = 'float32', ):
+	kws_hf = kws_hf if kws_hf else {
+		'dim': 17, 'apply_mask': True}
+	kws_hf['fov'] = group.attrs.get(
+		'designsize', 30) / 2
+	diameter = np.array(group['hf_diameter'])
+	# inconsistent diameters throughout the expt?
+	if len(set(group.attrs.get('diameter'))) != 1:
+		if 'hf_diameterR' in group:
+			diameter = np.concatenate([
+				diameter,
+				np.array(group['hf_diameterR']),
+			])
+		diameter = diameter.mean()
+		diameter_r = diameter
+	else:
+		diameter_r = None
+
+	hf = HyperFlow(
+		params=np.array(group['hf_params']),
+		center=np.array(group['hf_center']),
+		diameter=diameter,
+		**kws_hf,
+	)
+	stim = hf.compute_hyperflow(dtype=dtype)
+	spks = np.array(group['spks'], dtype=float)
+	if 'badspks' in group:
+		mask = ~np.array(group['badspks'], dtype=bool)
+	else:
+		mask = np.ones(len(spks), dtype=bool)
+	stim_r, spks_r, good_r = setup_repeat_data(
+		group=group,
+		kws_hf=kws_hf,
+		diameter=diameter_r,
+	)
+
+	if rescale is not None:
+		stim_scale = np.max(np.abs(stim))
+		stim *= rescale / stim_scale
+		if stim_r is not None:
+			stim_r *= rescale / stim_scale
+
+	return stim, spks, mask, stim_r, spks_r, good_r
+
+
 def setup_repeat_data(
 		group: h5py.Group,
 		kws_hf: dict,
-		r_ratio: float = None, ):
+		diameter: float = None, ):
 	if not group.attrs.get('has_repeats'):
 		return None, None, None
 
@@ -208,8 +257,8 @@ def setup_repeat_data(
 	hf = HyperFlow(
 		params=np.array(group['hf_paramsR']),
 		center=np.array(group['hf_centerR']),
-		r_ratio=r_ratio if r_ratio else
-		np.array(group['hf_radius_ratioR']),
+		diameter=diameter if diameter else
+		np.array(group['hf_diameterR']),
 		**kws_hf,
 	)
 	stim = hf.compute_hyperflow()
@@ -226,53 +275,6 @@ def setup_repeat_data(
 	spks[badspks] = np.nan
 
 	return stim, spks, intvl
-
-
-def load_ephys(
-		group: h5py.Group,
-		kws_hf: dict = None,
-		rescale: float = 2.0,
-		dtype: str = 'float32', ):
-	kws_hf = kws_hf if kws_hf else {
-		'dim': 17, 'sres': 1, 'apply_mask': True}
-	radius_ratio = np.array(group['hf_radius_ratio'])
-	# inconsistent diameters throughout the expt?
-	if len(set(group.attrs.get('diameter'))) != 1:
-		if 'hf_radius_ratioR' in group:
-			radius_ratio = np.concatenate([
-				radius_ratio,
-				np.array(group['hf_radius_ratioR']),
-			])
-		radius_ratio = radius_ratio.mean()
-		radius_ratio_r = radius_ratio
-	else:
-		radius_ratio_r = None
-
-	hf = HyperFlow(
-		params=np.array(group['hf_params']),
-		center=np.array(group['hf_center']),
-		r_ratio=radius_ratio,
-		**kws_hf,
-	)
-	stim = hf.compute_hyperflow(dtype=dtype)
-	spks = np.array(group['spks'], dtype=float)
-	if 'badspks' in group:
-		mask = ~np.array(group['badspks'], dtype=bool)
-	else:
-		mask = np.ones(len(spks), dtype=bool)
-	stim_r, spks_r, good_r = setup_repeat_data(
-		group=group,
-		kws_hf=kws_hf,
-		r_ratio=radius_ratio_r,
-	)
-
-	if rescale is not None:
-		stim_scale = np.max(np.abs(stim))
-		stim *= rescale / stim_scale
-		if stim_r is not None:
-			stim_r *= rescale / stim_scale
-
-	return stim, spks, mask, stim_r, spks_r, good_r
 
 
 def setup_supervised_data(
