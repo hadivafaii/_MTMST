@@ -12,7 +12,7 @@ class BaseConfig(object):
 			save: bool = True,
 			full: bool = False,
 			h_file: str = 'ALL_tres25',
-			sim_path: str = 'fixate1_dim-65_n-750k',
+			sim_path: str = 'fixate1_dim-17_n-750k',
 			base_dir: str = 'Documents/MTMST',
 	):
 		super(BaseConfig, self).__init__()
@@ -192,5 +192,5 @@ def _save_config(
 
 
 def _param_checker(k, p, obj):
-	# second 'if' gets rid of args, kwargs
+	# 2nd cond gets rid of args, kwargs
 	return k != 'self' and int(p.kind) == 1 and hasattr(obj, k)

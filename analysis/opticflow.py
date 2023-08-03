@@ -539,7 +539,7 @@ class HyperFlow(object):
 		self._init_span()
 		self.params = params
 		self.center = center
-		if isinstance(diameter, float):
+		if isinstance(diameter, (float, int)):
 			diameter *= np.ones(len(params))
 		self.diameter = diameter
 		assert len(self.params) == \
@@ -677,6 +677,8 @@ class VelField(object):
 	def _init(self, x: np.ndarray):
 		if x.ndim == 4:
 			x = np.expand_dims(x, 0)
+		if x.shape[2] == 2:
+			x = np.transpose(x, (0, 1, 3, 4, 2))
 		assert x.ndim == 5 and x.shape[-1] == 2
 		self.n, self.nt, self.nx, self.ny, _ = x.shape
 		self.x = x
@@ -749,33 +751,36 @@ class VelField(object):
 	def show(
 			self,
 			q: float = 0.8,
-			idx: int = 0,
+			svd_idx: int = 0,
 			display: bool = True,
 			**kwargs, ):
+		"""
+		Note: xtick labels assumes starting from zero lag
+		"""
 		defaults = {
 			'fig_x': 9,
-			'fig_y': 1.45,
-			'tight_layout': False,
+			'fig_y': 1.5,
+			'width_ratio': 2,
+			'layout': 'constrained',
 			'title_fontsize': 15,
-			'title_y': 1.1,
+			'title_y': 1.05,
 		}
-		for k, v in defaults.items():
-			if k not in kwargs:
-				kwargs[k] = v
+		kwargs = setup_kwargs(defaults, kwargs)
 		figsize = (
 			kwargs['fig_x'],
-			kwargs['fig_y'] * self.n,
+			kwargs['fig_y'] * self.n + 0.8,
 		)
+		width_ratios = [kwargs['width_ratio']] + [1] * 4
 		fig, axes = create_figure(
 			nrows=self.n,
 			ncols=5,
 			figsize=figsize,
+			layout=kwargs['layout'],
+			width_ratios=width_ratios,
 			sharex='col',
-			width_ratios=[2] + [1] * 4,
-			tight_layout=kwargs['tight_layout'],
 			reshape=True,
 		)
-		tker, sker = self.get_kers(idx)
+		tker, sker = self.get_kers(svd_idx)
 		kws1 = {
 			'cmap': 'hsv',
 			'vmax': 2 * np.pi,
@@ -809,7 +814,7 @@ class VelField(object):
 			)
 		xticks = range(self.nt)
 		xticklabels = [
-			f"{abs(t - self.nt) * self.tres}"
+			f"{abs(t - self.nt + 1) * self.tres}"
 			if t % 3 == 2 else ''
 			for t in xticks
 		]
@@ -830,22 +835,30 @@ class VelField(object):
 			self,
 			display: bool = True,
 			**kwargs, ):
+		"""
+		Note: title labels assumes starting from zero lag
+		"""
 		defaults = {
-			'figsize': (1.25 * self.nt, 6),
-			'title_fontsize': 9,
+			'fig_x': 1.2,
+			'fig_y': 6.35,
+			'layout': 'constrained',
+			'title_fontsize': 11,
 			'title_y': 1.0,
 		}
-		for k, v in defaults.items():
-			if k not in kwargs:
-				kwargs[k] = v
+		kwargs = setup_kwargs(defaults, kwargs)
+		figsize = (
+			kwargs['fig_x'] * self.nt,
+			kwargs['fig_y'],
+		)
 		figs = []
 		for i, a in enumerate(self.x):
 			fig, axes = create_figure(
 				nrows=5,
 				ncols=self.nt,
-				figsize=kwargs['figsize'],
 				sharex='all',
 				sharey='all',
+				figsize=figsize,
+				layout=kwargs['layout'],
 			)
 			rho, theta = vel2polar(a)
 			vminmax = np.max(np.abs(a))
@@ -872,7 +885,7 @@ class VelField(object):
 				axes[3, t].imshow(x2p, **kws2)
 				axes[4, t].imshow(rho[t], **kws3)
 				# title
-				time = (t - self.nt) * self.tres
+				time = (t - self.nt + 1) * self.tres
 				axes[0, t].set_title(
 					label=f't = {t}\n{time}ms',
 					fontsize=kwargs['title_fontsize'],
