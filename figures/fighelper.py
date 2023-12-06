@@ -17,9 +17,12 @@ def get_palette(pal: str = 'muted'):
 	pal = sns.color_palette(pal)
 	pal_model = {
 		'cNVAE': pal[0],
+		'NVAE': pal[9],
 		'VAE': pal[1],
 		'cNAE': '#6f6f6f',
 		'AE': '#aeaeae',
+		'PCA': pal[2],
+		'Raw': pal[4],
 	}
 	pal_cat = {
 		'obj1': pal[6],
@@ -55,7 +58,7 @@ def prep_rofl(
 		labels: List[str] = None, ):
 	sim_path = pjoin(
 		os.environ['HOME'],
-		'Documents/MTMST/data',
+		'Documents/MTVAE/data',
 		f"{cat}_dim-17_n-750k",
 	)
 	ds = {
@@ -84,7 +87,7 @@ def prep_rofl(
 			axis=1)[:, select_i]
 		for k, v in ds.items()
 	}
-	return g, select_lbl
+	return g, select_i, select_lbl
 
 
 def show_neural_results(
@@ -106,7 +109,7 @@ def show_neural_results(
 		data=df,
 		x=perf,
 		bins=np.linspace(0, 1, 41),
-		label=r'$R$',
+		label=r"$R$",
 		ax=axes[0, 0],
 	)
 	x = np.mean(df[perf])
@@ -114,7 +117,7 @@ def show_neural_results(
 		x=x,
 		ls='--',
 		color='r',
-		label=f"avg = {x:0.3f}",
+		label=r"$\mu_R = $" + f"{x:0.3f}",
 	)
 	axes[0, 0].locator_params(
 		axis='x', nbins=12)
@@ -150,14 +153,21 @@ def show_neural_results(
 		axis='x', nbins=len(bins) + 2)
 	axes[1, 0].set(xlabel='')
 
-	x = 'max_perf'
+	x = 'r_tst_norm'
 	if not all(np.isnan(df[x].values)):
 		sns.histplot(
 			x=x,
 			data=df,
 			bins=np.linspace(0, 1, 41),
-			label="max achievable R",
+			label=r"$R$ (test / nrm)",
 			ax=axes[1, 1],
+		)
+		x = np.mean(df[x][df[x] > 0])
+		axes[1, 1].axvline(
+			x=x,
+			ls='--',
+			color='g',
+			label=r"$\mu_R = $" + f"{x:0.3f}",
 		)
 		axes[1, 1].locator_params(
 			axis='x', nbins=len(bins) + 2)
@@ -468,6 +478,7 @@ def show_opticflow(
 		x: np.ndarray,
 		num: int = 4,
 		titles: list = None,
+		no_ticks: bool = True,
 		display: bool = True,
 		**kwargs, ):
 	defaults = {
@@ -520,6 +531,8 @@ def show_opticflow(
 		)
 		ax.tick_params(labelsize=8)
 	ax_square(axes)
+	if no_ticks:
+		remove_ticks(axes, False)
 	if display:
 		plt.show()
 	else:
@@ -641,6 +654,7 @@ def show_opticflow_row(
 		'tick_spacing': 4,
 		'title_fontsize': 11,
 		'layout': 'constrained',
+		'height_ratios': None,
 		'scale': None,
 	}
 	kwargs = setup_kwargs(defaults, kwargs)
@@ -658,8 +672,9 @@ def show_opticflow_row(
 		ncols=ncols,
 		sharex='all',
 		sharey='all',
-		figsize=kwargs['figsize'],
 		layout=kwargs['layout'],
+		figsize=kwargs['figsize'],
+		height_ratios=kwargs['height_ratios'],
 	)
 	looper = itertools.product(
 		range(nrows),

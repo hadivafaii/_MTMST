@@ -97,11 +97,14 @@ def save_script_neural(
 	return
 
 
-def compute_ed(s):
-	return sum(s)**2 / sum(s**2)
+def ellipsoid_rd(s: np.ndarray):
+	sum2 = sum(s**2)
+	radius = np.sqrt(sum2)
+	dim = sum(s) ** 2 / sum2
+	return radius, dim
 
 
-def normalize_global(x: np.ndarray, mu: float, sd: float):
+def shift_rescale(x: np.ndarray, mu: float, sd: float):
 	if x is None:
 		return x
 	return (x - mu) / sd

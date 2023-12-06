@@ -57,7 +57,20 @@ class AE(Module):
 		return self.out(s), latents
 
 	@torch.no_grad()
-	def xtract_ftr(self, x, full: bool = False):
+	def xtract_ftr(
+			self,
+			x: torch.Tensor,
+			lesion_enc: Iterable[bool] = None,
+			lesion_dec: Iterable[bool] = None,
+			full: bool = False, ):
+
+		if lesion_enc is None:
+			lesion_enc = [False] * sum(self.cfg.groups)
+		if lesion_dec is None:
+			lesion_dec = [False] * sum(self.cfg.groups)
+		assert sum(self.cfg.groups) == \
+			len(lesion_enc) == len(lesion_dec)
+
 		ftr_enc = collections.defaultdict(list)
 		ftr_dec = collections.defaultdict(list)
 		# enc
@@ -91,7 +104,14 @@ class AE(Module):
 				if isinstance(cell, CombinerDec):
 					if idx > 0:
 						# form encoder
-						param = comb_enc[idx - 1](comb_s[idx - 1], s)
+						param = comb_enc[idx - 1](
+							x1=comb_s[idx - 1].mul(0.0)
+							if lesion_enc[idx - 1]
+							else comb_s[idx - 1],
+							x2=s.mul(0.0)
+							if lesion_dec[idx - 1]
+							else s,
+						)
 						h = self.enc_sampler[idx](param)
 						latents.append(h)
 					# 'combiner_dec'
@@ -167,6 +187,16 @@ class AE(Module):
 				lvl_ids[key] = range(start, stop)
 				idx += 1
 		return scales, lvl_ids
+
+	def total_latents(self):
+		scales, _ = self.latent_scales()
+		n_total = sum([
+			self.cfg.n_latent_per_group * (
+				1 if self.cfg.compress
+				else s ** 2
+			) for s in scales
+		])
+		return n_total
 
 	def loss_recon(self, x, y, w=None):
 		epe = endpoint_error(x, y)
@@ -251,9 +281,11 @@ class AE(Module):
 			self.cfg.n_groups_per_scale == 1
 		)
 		self.kws = dict(
+			reg_lognorm=not self.cfg.weight_norm,
 			act_fn=self.cfg.activation_fn,
 			use_bn=self.cfg.use_bn,
 			use_se=self.cfg.use_se,
+			eps=self.cfg.res_eps,
 			scale=1.0,
 		)
 		self._init_stem()
@@ -522,18 +554,22 @@ class AE(Module):
 		self.out = nn.Conv2d(**kws)
 		return
 
-	def _init_norm(self, apply_norm: List[str] = None):
-		apply_norm = apply_norm if apply_norm else [
+	def _init_norm(self, reg_list: List[str] = None):
+		reg_list = reg_list if reg_list else [
 			'stem', 'pre_process', 'expand',
 			'enc0', 'enc_tower', 'dec_tower',
-			'enc_sampler', 'dec_sampler',
+			# 'enc_sampler', 'dec_sampler',
 		]
 		self.all_conv_layers, self.all_lognorm = [], []
 		for child_name, child in self.named_children():
 			for m in child.modules():
 				if isinstance(m, (Conv2D, DeConv2D)):
 					self.all_conv_layers.append(m)
-					if child_name in apply_norm and m.apply_norm:
+					cond = (
+						child_name in reg_list and
+						m.lognorm.requires_grad
+					)
+					if cond:
 						self.all_lognorm.append(m.lognorm)
 		self.sr_u, self.sr_v = {}, {}
 		if self.cfg.spectral_norm:

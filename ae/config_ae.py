@@ -26,6 +26,7 @@ class ConfigAE(BaseConfig):
 			scale_init: bool = False,
 			separable: bool = False,
 			ada_groups: bool = True,
+			weight_norm: bool = False,
 			spectral_norm: int = 0,
 			compress: bool = True,
 			use_bn: bool = False,
@@ -49,6 +50,7 @@ class ConfigAE(BaseConfig):
 		self.n_latent_per_group = n_latent_per_group
 		self.n_groups_per_scale = n_groups_per_scale
 		self.spectral_norm = spectral_norm
+		self.weight_norm = weight_norm
 		self.separable = separable
 		self.compress = compress
 		self.use_bn = use_bn
@@ -108,9 +110,6 @@ class ConfigAE(BaseConfig):
 		if self.use_bn:
 			name = f"{name}_bn"
 		return name
-
-	def total_latents(self):
-		return sum(self.groups) * self.n_latent_per_group
 
 
 class ConfigTrainAE(BaseConfigTrain):

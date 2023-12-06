@@ -4,11 +4,13 @@ from .fighelper import *
 def plot_bar_dci(
 		df: pd.DataFrame,
 		cat: str = 'fixate1',
+		annotate: bool = True,
 		display: bool = True,
 		**kwargs, ):
 	defaults = dict(
 		pal=get_palette()[0],
 		labelsize_x=13,
+		xlabel=r'$\beta$',
 		tick_labelsize_x=9,
 		tick_labelsize_y=10,
 		figsize=(3.9, 3.3),
@@ -77,12 +79,13 @@ def plot_bar_dci(
 			ax=axes[i],
 		)
 		axes[i].set(xlabel='', ylabel='')
-		axes[i].annotate(
-			text=label,
-			xy=xy_frac[metric],
-			xycoords='axes fraction',
-			fontsize=10,
-		)
+		if annotate:
+			axes[i].annotate(
+				text=label,
+				xy=xy_frac[metric],
+				xycoords='axes fraction',
+				fontsize=10,
+			)
 		leg = axes[i].get_legend()
 		if leg is not None and i > 0:
 			leg.remove()
@@ -99,18 +102,21 @@ def plot_bar_dci(
 		labelsize=kwargs['tick_labelsize_x'],
 	)
 	axes[-1].set_xlabel(
-		xlabel=r'$\beta$',
+		xlabel=kwargs['xlabel'],
 		fontsize=kwargs['labelsize_x'],
 	)
 	axes[-1].set_ylim((0, 0.92))
 
-	sns.move_legend(
-		axes[0],
-		'best',
-		title='',
-		fontsize=6.5,
-		bbox_to_anchor=kwargs['bbox'],
-	)
+	if kwargs['bbox'] is not None:
+		sns.move_legend(
+			axes[0],
+			loc='best',
+			title='',
+			fontsize=6.5,
+			bbox_to_anchor=kwargs['bbox'],
+		)
+	else:
+		axes[0].get_legend().remove()
 
 	if display:
 		plt.show()
@@ -177,7 +183,7 @@ def plot_scatter(
 		ylim=(0, 1),
 	)
 	kwargs = setup_kwargs(defaults, kwargs)
-	g, select_lbl = prep_rofl()
+	g, _, select_lbl = prep_rofl()
 	fig, axes = create_figure(
 		nrows=2,
 		ncols=g['vld'].shape[1],

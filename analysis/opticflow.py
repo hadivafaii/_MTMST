@@ -677,8 +677,6 @@ class VelField(object):
 	def _init(self, x: np.ndarray):
 		if x.ndim == 4:
 			x = np.expand_dims(x, 0)
-		if x.shape[2] == 2:
-			x = np.transpose(x, (0, 1, 3, 4, 2))
 		assert x.ndim == 5 and x.shape[-1] == 2
 		self.n, self.nt, self.nx, self.ny, _ = x.shape
 		self.x = x
@@ -717,6 +715,7 @@ class VelField(object):
 		s = np.zeros((self.n, self.nt))
 		v = np.zeros((self.n, ns, ns))
 		for i, a in enumerate(x):
+			# noinspection PyTupleAssignmentBalance
 			u[i], s[i], v[i] = sp_lin.svd(
 				a.reshape(self.nt, ns))
 

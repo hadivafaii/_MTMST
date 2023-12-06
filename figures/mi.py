@@ -4,6 +4,7 @@ from .fighelper import *
 def plot_hm(
 		data: Dict[str, np.ndarray],
 		scale_factor: int = 25,
+		cmap: str = 'bone_r',
 		display: bool = True, ):
 	assert scale_factor % 2 == 1, "must be an odd number"
 	fig, axes = create_figure(
@@ -23,7 +24,7 @@ def plot_hm(
 			aspect=9,
 			vmin=0,
 			vmax=0.5,
-			cmap='bone_r',
+			cmap=cmap,
 		)
 	yticks = np.arange(
 		start=0,

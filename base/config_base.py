@@ -13,7 +13,7 @@ class BaseConfig(object):
 			full: bool = False,
 			h_file: str = 'ALL_tres25',
 			sim_path: str = 'fixate1_dim-17_n-750k',
-			base_dir: str = 'Documents/MTMST',
+			base_dir: str = 'Documents/MTVAE',
 	):
 		super(BaseConfig, self).__init__()
 		if full:

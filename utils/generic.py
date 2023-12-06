@@ -80,6 +80,21 @@ def to_np(x: Union[torch.Tensor, np.ndarray]):
 	return x.data.cpu().numpy()
 
 
+def flat_cat(
+		x_list: List[torch.Tensor],
+		start_dim: int = 1,
+		end_dim: int = -1,
+		cat_dim: int = 1):
+	x = [
+		e.flatten(
+			start_dim=start_dim,
+			end_dim=end_dim,
+		) for e in x_list
+	]
+	x = torch.cat(x, dim=cat_dim)
+	return x
+
+
 def flatten_arr(
 		x: np.ndarray,
 		ndim_end: int = 1,
@@ -275,6 +290,7 @@ def save_obj(
 			raise RuntimeError(mode)
 	if verbose:
 		print(f"[PROGRESS] '{file_name}' saved at\n{save_dir}")
+		return
 	return path
 
 

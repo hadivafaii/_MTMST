@@ -197,7 +197,7 @@ def load_ephys(
 	kws_hf = kws_hf if kws_hf else {
 		'dim': 17, 'apply_mask': True}
 	kws_hf['fov'] = group.attrs.get(
-		'designsize', 30) / 2
+		'designsize', 30.0) / 2
 	diameter = np.array(group['hf_diameter'])
 	# inconsistent diameters throughout the expt?
 	if len(set(group.attrs.get('diameter'))) != 1:
@@ -368,7 +368,7 @@ def _main():
 		4: 3,
 		8: 5,
 	}
-	save_dir = '/home/hadi/Documents/MTMST/data'
+	save_dir = '/home/hadi/Documents/MTVAE/data'
 	combos = simulation_combos()
 	print(f"Simulation combos:\n{combos}")
 	pbar = tqdm(combos)

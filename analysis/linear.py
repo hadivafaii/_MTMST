@@ -154,24 +154,18 @@ class LinearModel(object):
 
 	def best_alpha(self):
 		assert self.kwargs is not None
-		if self.x_tst is not None:
+		if self.category in ['Ridge', 'LinearRegression']:
 			best_a, perf = max(
-				self.df['r_tst'].items(),
+				self.df['r'].items(),
+				key=lambda t: t[1],
+			)
+		elif self.category == 'PoissonRegressor':
+			best_a, perf = max(
+				self.df['nnll'].items(),
 				key=lambda t: t[1],
 			)
 		else:
-			if self.category in ['Ridge', 'LinearRegression']:
-				best_a, perf = max(
-					self.df['r'].items(),
-					key=lambda t: t[1],
-				)
-			elif self.category == 'PoissonRegressor':
-				best_a, perf = max(
-					self.df['nnll'].items(),
-					key=lambda t: t[1],
-				)
-			else:
-				raise NotImplementedError(self.category)
+			raise NotImplementedError(self.category)
 		if best_a not in self.models:
 			_ = self._fit(best_a)
 		return best_a, perf
@@ -179,35 +173,8 @@ class LinearModel(object):
 	def fit_linear(self, **kwargs):
 		self.kwargs = setup_kwargs(self.defaults, kwargs)
 		self.kwargs = filter_kwargs(self.fn, self.kwargs)
-		if self.x_tst is not None:
-			self._fit_tst()
-		else:
-			self._fit_xv()
+		self._fit_xv()
 		return self
-
-	def _fit(self, a: float):
-		if 'alpha' in self.kwargs:
-			self.kwargs['alpha'] = a
-		model = self.fn(**self.kwargs)
-		model.fit(flatten_stim(self.x), self.y)
-		kernel = model.coef_.reshape(self.x.shape[1:])
-		try:
-			self.kers[a] = VelField(kernel)
-		except AssertionError:
-			self.kers[a] = kernel
-		self.models[a] = model
-		return model
-
-	def _fit_tst(self):
-		for a in self.alphas:
-			model = self._fit(a)
-			pred = model.predict(flatten_stim(self.x_tst))
-			r2 = sk_metric.r2_score(self.y_tst, pred) * 100
-			r = sp_stats.pearsonr(self.y_tst, pred)[0]
-			self.df.loc[a, 'r2_tst'] = r2
-			self.df.loc[a, 'r_tst'] = r
-			self.preds[a] = pred
-		return
 
 	def _fit_xv(self):
 		for a in self.alphas:
@@ -224,6 +191,27 @@ class LinearModel(object):
 			self.df.loc[a, 'r'] = np.nanmean(r)
 		return
 
+	def _fit(self, a: float):
+		if 'alpha' in self.kwargs:
+			self.kwargs['alpha'] = a
+		model = self.fn(**self.kwargs)
+		model.fit(flatten_stim(self.x), self.y)
+		kernel = model.coef_.reshape(self.x.shape[1:])
+		try:
+			self.kers[a] = VelField(kernel)
+		except AssertionError:
+			self.kers[a] = kernel
+		self.models[a] = model
+		# test
+		if self.x_tst is not None:
+			pred = model.predict(flatten_stim(self.x_tst))
+			r = sp_stats.pearsonr(self.y_tst, pred)[0]
+			r2 = sk_metric.r2_score(self.y_tst, pred)
+			self.df.loc[a, 'r2_tst'] = r2
+			self.df.loc[a, 'r_tst'] = r
+			self.preds[a] = pred
+		return model
+
 	def _init_df(self):
 		fill_vals = [np.nan] * len(self.alphas)
 		df = {
@@ -239,13 +227,13 @@ class LinearModel(object):
 		self.df = pd.DataFrame(df).set_index('alpha')
 		return
 
-	def show_pred(self, figsize=(7.0, 3.0)):
+	def show_pred(self, figsize=(6.0, 3.0)):
 		if not self.preds:
 			return
 		fig, ax = create_figure(1, 1, figsize)
 		ax.plot(self.y_tst, lw=1.8, color='k', label='true')
 		for i, (a, pred) in enumerate(self.preds.items()):
-			r2 = self.df.loc[a, 'r2_tst']
+			r2 = self.df.loc[a, 'r2_tst'] * 100
 			lbl = r"$R^2 = $" + f"{r2:0.1f}%  ("
 			lbl += r"$\alpha = $" + f"{a:0.2g})"
 			ax.plot(pred, color=f'C{i}', label=lbl)

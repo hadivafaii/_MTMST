@@ -8,8 +8,9 @@ from base.common import (
 )
 
 _ATTRS = [
-	'root', 'expt', 'n_pcs', 'n_lags', 'n_top_pix', 'rescale',
-	'use_latents', 'kws_hf', 'kws_push', 'kws_xt', 'normalize',
+	'root', 'expt', 'n_pcs', 'n_lags', 'n_top_pix',
+	'kws_hf', 'kws_process', 'kws_xtract', 'kws_push',
+	'rescale', 'use_latents', 'normalize',
 ]
 _FIT = [
 	'sta', 'temporal', 'spatial', 'top_lags', 'top_pix_per_lag',
@@ -44,16 +45,20 @@ class Neuron(object):
 			k: kwargs[k] if k in kwargs else v for k, v
 			in dict(dim=17, apply_mask=True).items()
 		}
-		self.kws_xt = {
+		self.kws_process = {
 			k: kwargs[k] if k in kwargs else v for k, v in
 			dict(scale=2, pool='avg', act_fn='none').items()
+		}
+		self.kws_xtract = {
+			k: kwargs[k] if k in kwargs else v for k, v in
+			dict(lesion_enc=None, lesion_dec=None).items()
 		}
 		self.kws_push = {
 			k: kwargs[k] if k in kwargs else v for k, v
 			in dict(which='z', use_ema=False).items()
 		}
 		self.use_latents = self.kws_push['which'] == 'z'
-		self.n_top_pix = min(n_top_pix, self.kws_xt['scale'] ** 2)
+		self.n_top_pix = min(n_top_pix, self.kws_process['scale'] ** 2)
 		self.normalize = normalize
 		self.verbose = verbose
 		self.dtype = dtype
@@ -216,7 +221,8 @@ class Neuron(object):
 		if self.ftr is None:
 			kws = dict(
 				tr=self.tr,
-				kws_process=self.kws_xt,
+				kws_process=self.kws_process,
+				kws_xtract=self.kws_xtract,
 				verbose=self.verbose,
 				dtype=self.dtype,
 				max_pool=False,
@@ -225,8 +231,8 @@ class Neuron(object):
 			ftr, _ = push(stim=self.stim, **kws)
 			ftr_r, _ = push(stim=self.stim_r, **kws)
 			# global normalzie
-			self.ftr = normalize_global(ftr, self.mu, self.sd)
-			self.ftr_r = normalize_global(ftr_r, self.mu, self.sd)
+			self.ftr = shift_rescale(ftr, self.mu, self.sd)
+			self.ftr_r = shift_rescale(ftr_r, self.mu, self.sd)
 		data = self.get_data(idx)
 		if not self.use_latents:
 			data['x'] = self.pca[idx].transform(data['x'])
@@ -242,7 +248,8 @@ class Neuron(object):
 			x = self.stim
 		kws = dict(
 			tr=self.tr,
-			kws_process=self.kws_xt,
+			kws_process=self.kws_process,
+			kws_xtract=self.kws_xtract,
 			verbose=self.verbose,
 			dtype=self.dtype,
 			max_pool=True,
@@ -261,7 +268,7 @@ class Neuron(object):
 			)
 		else:
 			stats = {}
-		ftr = normalize_global(ftr, self.mu, self.sd)
+		ftr = shift_rescale(ftr, self.mu, self.sd)
 		return ftr, ftr_p, stats
 
 	def get_data(
@@ -420,7 +427,8 @@ class Neuron(object):
 	def _xtract(self):
 		kws = dict(
 			tr=self.tr,
-			kws_process=self.kws_xt,
+			kws_process=self.kws_process,
+			kws_xtract=self.kws_xtract,
 			verbose=self.verbose,
 			dtype=self.dtype,
 			max_pool=False,
@@ -429,10 +437,14 @@ class Neuron(object):
 		ftr, _ = push(stim=self.stim, **kws)
 		ftr_r, _ = push(stim=self.stim_r, **kws)
 		# normalize?
-		self.mu = ftr.mean() if self.normalize else 0
-		self.sd = ftr.std() if self.normalize else 1
-		self.ftr = normalize_global(ftr, self.mu, self.sd)
-		self.ftr_r = normalize_global(ftr_r, self.mu, self.sd)
+		if self.normalize:
+			self.mu = ftr.mean(0, keepdims=True)
+			self.sd = ftr.std(0, keepdims=True)
+		else:
+			self.mu = 0
+			self.sd = 1
+		self.ftr = shift_rescale(ftr, self.mu, self.sd)
+		self.ftr_r = shift_rescale(ftr_r, self.mu, self.sd)
 		if self.verbose:
 			print('[PROGRESS] features extracted')
 		return
@@ -544,43 +556,48 @@ def summarize_neural_fits(
 		kws = dict(tr=tr, root=root, expt=expt)
 		ro = Neuron(**kws).load(fit_name, 'cpu')
 		ro_all[f"{root}_{expt}"] = ro
+		r, nnll, r_tst, r2_tst = {}, {}, {}, {}
+		r_tst_norm, r2_tst_norm = {}, {}
 		for i, d in ro.df.items():
 			_df = d.reset_index()
+			# perf
+			best_i = _df['r'].argmax()
+			# best_a = _df.index[best_i]
+			best_perf = dict(_df.iloc[best_i])
+			r[i] = best_perf.get('r', np.nan)
+			nnll[i] = best_perf.get('nnll', np.nan)
+			r_tst[i] = best_perf.get('r_tst', np.nan)
+			r2_tst[i] = best_perf.get('r2_tst', np.nan)
 			if ro.max_perf is not None:
-				_df['max_r2'] = ro.max_perf[i]
+				_max = ro.max_perf[i]
+				r2_tst_norm[i] = r2_tst[i] / _max
+				r_tst_norm[i] = r_tst[i] / np.sqrt(_max)
+			else:
+				r2_tst_norm[i] = np.nan
+				r_tst_norm[i] = np.nan
+
 			_df['root'] = root
 			_df['expt'] = expt
 			_df['cell'] = i
 			df_all.append(_df)
-		# alpha & perf
+		# alpha
 		log_alpha = {}
 		for i, m in ro.mod.items():
 			if hasattr(m, 'alpha'):
 				log_alpha[i] = np.log10(m.alpha)
 			else:
 				log_alpha[i] = -10  # For lr: alpha = 0
-		if ro.max_perf is not None:
-			max_perf = {
-				i: np.sqrt(ro.max_perf[i])
-				for i, r in ro.perf.items()
-			}
-			perf = {
-				i: r / max_perf[i] for
-				i, r in ro.perf.items()
-			}
-		else:
-			max_perf = {
-				i: np.nan for
-				i in ro.perf
-			}
-			perf = ro.perf
 		# put all in df
 		df.append({
-			'root': [root] * len(perf),
-			'expt': [expt] * len(perf),
-			'cell': perf.keys(),
-			'perf': perf.values(),
-			'max_perf': max_perf.values(),
+			'root': [root] * len(r),
+			'expt': [expt] * len(r),
+			'cell': r.keys(),
+			'r': r.values(),
+			'nnll': nnll.values(),
+			'r_tst': r_tst.values(),
+			'r2_tst': r2_tst.values(),
+			'r_tst_norm': r_tst_norm.values(),
+			'r2_tst_norm': r2_tst_norm.values(),
 			'log_alpha': log_alpha.values(),
 			'best_lag': ro.best_lag.values(),
 		})
@@ -595,11 +612,11 @@ def summarize_neural_fits(
 				pix_counts[i] = collections.Counter([
 					tuple(e) for e in
 					ro.top_pix_per_lag[i]
-				]).get(tuple(best), 0)
+				]).get(best, 0)
 			df[-1].update({
 				'pix_rank': pix_ranks.values(),
 				'pix_count': pix_counts.values(),
-				'top_lag': ro.top_lags[list(perf.keys())],
+				'top_lag': ro.top_lags[list(r.keys())],
 			})
 	df = pd.DataFrame(merge_dicts(df))
 	df_all = pd.concat(df_all).reset_index()
@@ -613,6 +630,15 @@ def summarize_neural_fits(
 	df.insert(0, 'category', info[i - 1])
 	df.insert(1, 'nf', int(info[i].split('-')[1]))
 	df.insert(2, 'beta', tr.cfg.kl_beta)
+	try:
+		lesion, lesion_s = next(
+			e for e in info
+			if 'lesion' in e
+		).split('-')[1:]
+	except StopIteration:
+		lesion, lesion_s = 'none', 'none'
+	df.insert(3, 'lesion', lesion)
+	df.insert(4, 'lesion_scale', lesion_s)
 
 	save_obj(
 		obj=df,
@@ -667,6 +693,7 @@ def best_fits(df: pd.DataFrame, categories: List[str] = None):
 def push(
 		tr: TrainerVAE,
 		stim: np.ndarray,
+		kws_xtract: dict,
 		kws_process: dict,
 		which: str = 'enc',
 		verbose: bool = False,
@@ -687,7 +714,7 @@ def push(
 		nf = sum(nf_dec.values())
 		shape = (len(stim), nf, s, s)
 	elif which == 'z':
-		nf = m.cfg.total_latents()
+		nf = m.total_latents()
 		shape = (len(stim), nf)
 	else:
 		raise NotImplementedError(which)
@@ -705,13 +732,23 @@ def push(
 	for i in tqdm(range(n_iter), disable=not verbose):
 		a = i * tr.cfg.batch_size
 		b = min(a + tr.cfg.batch_size, len(x))
-		z, ftr, *_ = m.xtract_ftr(
-			tr.to(stim[a:b]), full=True)
 		if which == 'z':
-			z = torch.cat(z, dim=1).squeeze()
-			x[a:b] = to_np(z).astype(dtype)
+			kws_xtract['full'] = False
+			z = m.xtract_ftr(
+				x=tr.to(stim[a:b]),
+				**kws_xtract,
+			)[0]
+			x[a:b] = to_np(flat_cat(z)).astype(dtype)
 		else:
-			ftr = process_ftrs(ftr[which], **kws_process)
+			kws_xtract['full'] = True
+			ftr = m.xtract_ftr(
+				x=tr.to(stim[a:b]),
+				**kws_xtract,
+			)[1]
+			ftr = process_ftrs(
+				ftr=ftr[which],
+				**kws_process,
+			)
 			x[a:b] = to_np(ftr).astype(dtype)
 			if max_pool:
 				xp[a:b] = to_np(mp(F.silu(ftr)).squeeze())
@@ -764,7 +801,7 @@ def setup_data(
 
 
 def results_dir(fit_name: str = None, glm: bool = False):
-	path = 'Documents/MTMST/results'
+	path = 'Documents/MTVAE/results'
 	path = (
 		pjoin(os.environ['HOME'], path),
 		'GLM' if glm else 'Ridge',
@@ -867,6 +904,18 @@ def _setup_args() -> argparse.Namespace:
 		type=str,
 	)
 	parser.add_argument(
+		"--lesion_enc",
+		help="which scale from enc to lesion?",
+		default=None,
+		type=int,
+	)
+	parser.add_argument(
+		"--lesion_dec",
+		help="which scale from dec to lesion?",
+		default=None,
+		type=int,
+	)
+	parser.add_argument(
 		"--scale",
 		help='Which scale to pool to?',
 		default=2,
@@ -904,9 +953,9 @@ def _setup_args() -> argparse.Namespace:
 	)
 	parser.add_argument(
 		"--normalize",
-		help='normalize before PCA?',
-		action='store_true',
+		help='zscore features?',
 		default=False,
+		type=true_fn,
 	)
 	# etc.
 	parser.add_argument(
@@ -928,16 +977,13 @@ def _main():
 	args = _setup_args()
 	# setup alphas
 	if args.log_alphas is None:
-		log_a = itertools.chain(
-			range(-8, -3, 2),
-			range(-2, 7),
-			range(8, 17, 2),
-		)
+		log_a = [[-6], range(-2, 9, 2), [16]]
+		log_a = itertools.chain(*log_a)
 		args.log_alphas = sorted(log_a)
 
 	# load trainer
 	try:
-		path = 'Documents/MTMST/models'
+		path = 'Documents/MTVAE/models'
 		tr, metadata = load_model(
 			model_name=args.model_name,
 			fit_name=args.fit_name,
@@ -947,7 +993,7 @@ def _main():
 			path=path,
 		)
 	except FileNotFoundError:
-		path = 'Documents/MTMST/models_copied'
+		path = 'Documents/MTVAE/models_copied'
 		tr, metadata = load_model(
 			model_name=args.model_name,
 			fit_name=args.fit_name,
@@ -974,7 +1020,7 @@ def _main():
 	if args.comment is not None:
 		name = f"{args.comment}_{name}"
 	if args.which == 'z':
-		nf = tr.model.cfg.total_latents()
+		nf = tr.model.total_latents()
 	elif args.which == 'enc':
 		nf = tr.model.ftr_sizes()[0]
 		nf = sum(nf.values())
@@ -991,6 +1037,14 @@ def _main():
 	]
 	if tr.model.vanilla:
 		fit_name.insert(0, 'vanilla')
+	if args.normalize:
+		fit_name.insert(-1, 'zscr')
+	if args.lesion_enc:
+		s = f'lesion-enc-{args.lesion_enc}'
+		fit_name.insert(-1, s)
+	if args.lesion_dec:
+		s = f'lesion-dec-{args.lesion_dec}'
+		fit_name.insert(-1, s)
 	fit_name = '_'.join(fit_name)
 	path = pjoin(
 		tr.model.cfg.results_dir,
@@ -1015,11 +1069,18 @@ def _main():
 		n_pcs=args.n_pcs,
 		n_lags=args.n_lags,
 		n_top_pix=args.n_top_pix,
-		dim=tr.model.cfg.input_sz,
 		rescale=args.rescale,
 		normalize=args.normalize,
 		verbose=args.verbose,
 		which=args.which,
+		lesion_enc=[
+			args.lesion_enc == s for s in
+			tr.model.latent_scales()[0]
+		] if args.lesion_enc else None,
+		lesion_dec=[
+			args.lesion_dec == s for s in
+			tr.model.latent_scales()[0]
+		] if args.lesion_dec else None,
 		apply_mask=args.apply_mask,
 		use_ema=args.use_ema,
 		act_fn=args.act_fn,

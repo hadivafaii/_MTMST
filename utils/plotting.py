@@ -154,6 +154,19 @@ def ax_square(axes):
 	return axes
 
 
+def move_legend(
+		ax: plt.Axes,
+		bbox: Tuple[float, float] = None, ):
+	leg = ax.get_legend()
+	if leg is None:
+		return ax
+	if bbox is None:
+		leg.remove()
+	else:
+		leg.set_bbox_to_anchor(bbox)
+	return ax
+
+
 def trim_axs(axes, n):
 	axs = axes.flat
 	for ax in axs[n:]:

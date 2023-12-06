@@ -271,7 +271,7 @@ def load_model(
 		device: str = 'cpu',
 		strict: bool = True,
 		verbose: bool = False,
-		path: str = 'Documents/MTMST/models',
+		path: str = 'Documents/MTVAE/models',
 		**kwargs, ):
 	# cfg model
 	path = pjoin(os.environ['HOME'], path, model_name)

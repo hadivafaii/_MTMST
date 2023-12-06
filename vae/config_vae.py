@@ -114,8 +114,8 @@ class ConfigVAE(BaseConfig):
 			name = f"{name}_bn"
 		return name
 
-	def total_latents(self):
-		return sum(self.groups) * self.n_latent_per_group
+	# def total_latents(self):
+	# 	return sum(self.groups) * self.n_latent_per_group
 
 
 class ConfigTrainVAE(BaseConfigTrain):

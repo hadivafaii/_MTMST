@@ -157,7 +157,21 @@ class VAE(Module):
 		return self.out(s)
 
 	@torch.no_grad()
-	def xtract_ftr(self, x, t: float = 0, full: bool = False):
+	def xtract_ftr(
+			self,
+			x: torch.Tensor,
+			t: float = 0.0,
+			lesion_enc: Iterable[bool] = None,
+			lesion_dec: Iterable[bool] = None,
+			full: bool = False, ):
+
+		if lesion_enc is None:
+			lesion_enc = [False] * sum(self.cfg.groups)
+		if lesion_dec is None:
+			lesion_dec = [False] * sum(self.cfg.groups)
+		assert sum(self.cfg.groups) == \
+			len(lesion_enc) == len(lesion_dec)
+
 		ftr_enc = collections.defaultdict(list)
 		ftr_dec = collections.defaultdict(list)
 		kws = dict(
@@ -213,7 +227,14 @@ class VAE(Module):
 						p_all.append(dist)
 
 						# form encoder
-						param = comb_enc[idx - 1](comb_s[idx - 1], s)
+						param = comb_enc[idx - 1](
+							x1=comb_s[idx - 1].mul(0.0)
+							if lesion_enc[idx - 1]
+							else comb_s[idx - 1],
+							x2=s.mul(0.0)
+							if lesion_dec[idx - 1]
+							else s,
+						)
 						param = self.enc_sampler[idx](param)
 						mu_q, logsig_q = torch.chunk(param, 2, dim=1)
 						if self.cfg.residual_kl:
@@ -304,6 +325,16 @@ class VAE(Module):
 				lvl_ids[key] = range(start, stop)
 				idx += 1
 		return scales, lvl_ids
+
+	def total_latents(self):
+		scales, _ = self.latent_scales()
+		n_total = sum([
+			self.cfg.n_latent_per_group * (
+				1 if self.cfg.compress
+				else s ** 2
+			) for s in scales
+		])
+		return n_total
 
 	def loss_recon(self, x, y, w=None):
 		epe = endpoint_error(x, y)

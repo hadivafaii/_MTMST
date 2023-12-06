@@ -175,7 +175,7 @@ class TrainerVAE(BaseTrainer):
 				to_write[f"kl_full/active_{j}"] = n_active
 				total_active += n_active
 			to_write['train/total_active'] = total_active
-			ratio = total_active / self.model.cfg.total_latents()
+			ratio = total_active / self.model.total_latents()
 			to_write['train/total_active_ratio'] = ratio
 			for k, v in to_write.items():
 				self.writer.add_scalar(k, v, gstep)
@@ -259,17 +259,16 @@ class TrainerVAE(BaseTrainer):
 
 		epe, kl, kl_diag = [], [], []
 		x_all, y_all, z_all = [], [], []
-		for i, (x, norm) in enumerate(dl):
+		for x, norm in iter(dl):
 			if x.device != self.device:
 				x, norm = self.to([x, norm])
 			z, _, y, q, p = model.xtract_ftr(
 				x=x, t=0.0 if freeze else 1.0)
-			z = torch.cat(z, dim=1).squeeze()
 			# data
 			if dl_name == 'trn':
 				x_all.append(to_np(x))
 				y_all.append(to_np(y))
-			z_all.append(to_np(z))
+			z_all.append(to_np(flat_cat(z)))
 			# loss
 			epe.append(to_np(model.loss_recon(
 				x=x, y=y, w=1 / norm)))
@@ -300,7 +299,7 @@ class TrainerVAE(BaseTrainer):
 				n = n_samples - tot
 			_x, _z, _ = model.sample(
 				n=n, t=t, device=self.device)
-			_z = torch.cat(_z, dim=1).squeeze()
+			_z = flat_cat(_z)
 			x_sample.append(to_np(_x))
 			z_sample.append(to_np(_z))
 			tot += self.cfg.batch_size
@@ -427,7 +426,7 @@ class TrainerVAE(BaseTrainer):
 		mi_max = np.round(np.max(regr['regr/mi'], axis=1), 2)
 		mi_max = ', '.join([str(e) for e in mi_max])
 		title = f"model = {title};    max MI (row) = {mi_max}"
-		figsize = (0.08 * self.model.cfg.total_latents(), 0.72 * len(f))
+		figsize = (0.08 * self.model.total_latents(), 0.72 * len(f))
 		fig, _ = plot_heatmap(
 			r=regr['regr/mi'],
 			yticklabels=_ty,
@@ -803,7 +802,7 @@ def _main():
 	msg = ', '.join([
 		f"# enc ftrs: {sum(vae.ftr_sizes()[0].values())}",
 		f"# conv layers: {len(vae.all_conv_layers)}",
-		f"# latents: {vae.cfg.total_latents()}",
+		f"# latents: {vae.total_latents()}",
 	])
 	print('\n', msg)
 	vae.print()
