@@ -646,6 +646,7 @@ def show_opticflow_full(
 def show_opticflow_row(
 		x: np.ndarray,
 		titles: np.ndarray = None,
+		scale: Sequence[float] = None,
 		no_ticks: bool = True,
 		display: bool = True,
 		**kwargs, ):
@@ -655,7 +656,6 @@ def show_opticflow_row(
 		'title_fontsize': 11,
 		'layout': 'constrained',
 		'height_ratios': None,
-		'scale': None,
 	}
 	kwargs = setup_kwargs(defaults, kwargs)
 	x = to_np(x)
@@ -696,8 +696,9 @@ def show_opticflow_row(
 			except IndexError:
 				pass
 		ax.quiver(
-			span, span, v[0], v[1],
-			scale=kwargs['scale'],
+			span, span,
+			v[0], v[1],
+			scale=scale,
 		)
 		ax.set(
 			xticks=ticks,

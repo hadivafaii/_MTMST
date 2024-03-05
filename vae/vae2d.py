@@ -161,16 +161,19 @@ class VAE(Module):
 			self,
 			x: torch.Tensor,
 			t: float = 0.0,
+			lesion: Iterable[bool] = None,
 			lesion_enc: Iterable[bool] = None,
 			lesion_dec: Iterable[bool] = None,
 			full: bool = False, ):
 
+		if lesion is None:
+			lesion = [False] * sum(self.cfg.groups)
 		if lesion_enc is None:
 			lesion_enc = [False] * sum(self.cfg.groups)
 		if lesion_dec is None:
 			lesion_dec = [False] * sum(self.cfg.groups)
 		assert sum(self.cfg.groups) == \
-			len(lesion_enc) == len(lesion_dec)
+			len(lesion) == len(lesion_enc) == len(lesion_dec)
 
 		ftr_enc = collections.defaultdict(list)
 		ftr_dec = collections.defaultdict(list)
@@ -251,6 +254,8 @@ class VAE(Module):
 							)
 						q_all.append(dist)
 						z = dist.sample()
+						if lesion[idx - 1]:
+							z.mul_(0.0)
 						latents.append(z)
 					# 'combiner_dec'
 					s = cell(s, self.expand[idx](z))

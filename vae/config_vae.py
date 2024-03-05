@@ -1,4 +1,5 @@
 from base.config_base import *
+_KL_BALANCER_CHOICES = ['equal', 'linear', 'sqrt', 'square']
 
 
 class ConfigVAE(BaseConfig):
@@ -154,6 +155,8 @@ class ConfigTrainVAE(BaseConfigTrain):
 		super(ConfigTrainVAE, self).__init__(**kwargs)
 		self.kl_beta = kl_beta
 		self.kl_beta_min = kl_beta_min
+		assert kl_balancer in _KL_BALANCER_CHOICES, \
+			f"allowed kl balancers:\n{_KL_BALANCER_CHOICES}"
 		self.kl_balancer = kl_balancer
 		self.kl_anneal_cycles = kl_anneal_cycles
 		self.kl_anneal_portion = kl_anneal_portion

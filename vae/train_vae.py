@@ -234,14 +234,15 @@ class TrainerVAE(BaseTrainer):
 				self.writer.add_scalar(k, v, gstep)
 				self.stats[k][gstep] = v
 			if cond:
-				to_write = {
-					'eval/mi': np.max(mi['regr/mi'], 1).mean(),
-					'eval/mi_norm': np.max(mi['regr/mi_norm'], 1).mean(),
-					'eval/mig': mi['regr/mig'].mean(),
-				}
-				for k, v in to_write.items():
-					self.writer.add_scalar(k, v, gstep)
-					self.stats[k][gstep] = v
+				if self.model.cfg.compress:  # only for cNVAE
+					to_write = {
+						'eval/mi': np.max(mi['regr/mi'], 1).mean(),
+						'eval/mi_norm': np.max(mi['regr/mi_norm'], 1).mean(),
+						'eval/mig': mi['regr/mig'].mean(),
+					}
+					for k, v in to_write.items():
+						self.writer.add_scalar(k, v, gstep)
+						self.stats[k][gstep] = v
 				for k, v in figs.items():
 					self.writer.add_figure(k, v, gstep)
 		return data, loss
@@ -409,42 +410,42 @@ class TrainerVAE(BaseTrainer):
 		fig, _ = plot_bar(df, tick_labelsize_x=10, display=False)
 		figs['fig/bar_aux'] = fig
 
-		# mutual info
-		n_jobs = max(1, joblib.effective_n_jobs())
-		n_jobs /= max(1, torch.cuda.device_count())
-		mi = mi_analysis(
-			z=regr['z_vld'],
-			g=self.dl_vld.dataset.g,
-			n_jobs=int(n_jobs),
-		)
-		mi = {
-			f"regr/{k}": v for
-			k, v in mi.items()
-		}
-		regr = {**regr, **mi}
-		title = '_'.join(self.model.cfg.name().split('_')[:3])
-		mi_max = np.round(np.max(regr['regr/mi'], axis=1), 2)
-		mi_max = ', '.join([str(e) for e in mi_max])
-		title = f"model = {title};    max MI (row) = {mi_max}"
-		figsize = (0.08 * self.model.total_latents(), 0.72 * len(f))
-		fig, _ = plot_heatmap(
-			r=regr['regr/mi'],
-			yticklabels=_ty,
-			title=title,
-			tick_labelsize_x=10,
-			tick_labelsize_y=7,
-			title_fontsize=14,
-			title_y=1.02,
-			vmin=0,
-			vmax=0.65,
-			cmap='rocket',
-			linecolor='dimgrey',
-			figsize=figsize,
-			cbar=False,
-			annot=False,
-			display=False,
-		)
-		figs['fig/mutual_info'] = fig
+		if self.model.cfg.compress:  # only for cNVAE
+			n_jobs = max(1, joblib.effective_n_jobs())
+			n_jobs /= max(1, torch.cuda.device_count())
+			mi = mi_analysis(
+				z=regr['z_vld'],
+				g=self.dl_vld.dataset.g,
+				n_jobs=int(n_jobs),
+			)
+			mi = {
+				f"regr/{k}": v for
+				k, v in mi.items()
+			}
+			regr = {**regr, **mi}
+			title = '_'.join(self.model.cfg.name().split('_')[:3])
+			mi_max = np.round(np.max(regr['regr/mi'], axis=1), 2)
+			mi_max = ', '.join([str(e) for e in mi_max])
+			title = f"model = {title};    max MI (row) = {mi_max}"
+			figsize = (0.08 * self.model.total_latents(), 0.72 * len(f))
+			fig, _ = plot_heatmap(
+				r=regr['regr/mi'],
+				yticklabels=_ty,
+				title=title,
+				tick_labelsize_x=10,
+				tick_labelsize_y=7,
+				title_fontsize=14,
+				title_y=1.02,
+				vmin=0,
+				vmax=0.65,
+				cmap='rocket',
+				linecolor='dimgrey',
+				figsize=figsize,
+				cbar=False,
+				annot=False,
+				display=False,
+			)
+			figs['fig/mutual_info'] = fig
 		return x_sample, z_sample, regr, figs
 
 	def setup_data(self, gpu: bool = True):
@@ -665,6 +666,12 @@ def _setup_args() -> argparse.Namespace:
 		type=float,
 	)
 	parser.add_argument(
+		"--kl_balancer",
+		help='kl balancer function',
+		default='equal',
+		type=str,
+	)
+	parser.add_argument(
 		"--kl_anneal_portion",
 		help='kl beta anneal portion',
 		default=0.3,
@@ -787,6 +794,7 @@ def _main():
 			use_amp=args.use_amp,
 			# kl
 			kl_beta=args.kl_beta,
+			kl_balancer=args.kl_balancer,
 			kl_anneal_portion=args.kl_anneal_portion,
 			kl_const_portion=args.kl_const_portion,
 			kl_anneal_cycles=args.kl_anneal_cycles,
